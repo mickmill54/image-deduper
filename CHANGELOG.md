@@ -8,7 +8,19 @@ Version bumps follow the conventional-commits convention described in `CLAUDE.md
 
 ## [Unreleased]
 
-## [0.1.0] — 2026-05-05
+## [0.1.1](https://github.com/mickmill54/image-deduper/releases/tag/v0.1.1) — 2026-05-05
+
+### Added
+- GitHub Actions CI workflow (`.github/workflows/ci.yml`) running `ruff check`
+  and `pytest` on every push and pull request against `main`. CI runs on
+  Python 3.11, 3.12, and 3.13 to catch version-specific regressions.
+
+### Changed
+- `README.md` install section now shows the `git clone` path from the
+  GitHub repo as the primary install method.
+- `CHANGELOG.md` v0.1.0 heading links to the GitHub release page.
+
+## [0.1.0](https://github.com/mickmill54/image-deduper/releases/tag/v0.1.0) — 2026-05-05
 
 Initial release.
 

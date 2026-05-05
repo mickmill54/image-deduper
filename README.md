@@ -25,6 +25,18 @@ should make by eye, not by hash.
 
 ## Install
 
+From a fresh clone:
+
+```bash
+git clone git@github.com:mickmill54/image-deduper.git
+cd image-deduper
+make setup
+source .venv/bin/activate
+dedupe --help
+```
+
+Or if you already have the source:
+
 ```bash
 make setup
 source .venv/bin/activate
