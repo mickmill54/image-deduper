@@ -8,6 +8,23 @@ Version bumps follow the conventional-commits convention described in `CLAUDE.md
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/mickmill54/image-deduper/releases/tag/v0.3.0) — 2026-05-05
+
+### Added
+- **`dedupe convert --archive-originals`** — after each successful
+  conversion, *move* the original into a sibling archive folder
+  (default `<folder>-heic`, override with `--archive-folder PATH`).
+  Mirrors the source layout inside the archive and writes an
+  `archive-manifest.json` for auditability. Off by default to preserve
+  v0.2.0 behavior.
+- New `convert` flags: `--archive-originals`, `--archive-folder PATH`.
+- 5 new tests covering archive layout, default folder name, dry-run
+  behavior, default-off (no archive without the flag), and refusal
+  to overwrite an existing archive path.
+
+### Changed
+- README and `docs/architecture.md` documenting the archive flow.
+
 ## [0.2.0](https://github.com/mickmill54/image-deduper/releases/tag/v0.2.0) — 2026-05-05
 
 ### Added

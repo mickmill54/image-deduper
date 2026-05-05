@@ -15,9 +15,12 @@ photo slideshows where **safety and auditability matter more than speed**.
 - **`dedupe restore <dups-folder>`** — replays the manifest and moves every
   quarantined file back to its original location. Refuses to overwrite.
 - **`dedupe convert <folder>`** — converts images to a target format
-  (default: HEIC/HEIF → JPEG). Originals are never modified; converted
-  copies are written to a sibling `<folder>-converted/` folder mirroring
-  the original layout.
+  (default: HEIC/HEIF → JPEG). Converted copies go to a sibling
+  `<folder>-converted/` folder. By default originals are *not*
+  modified; pass `--archive-originals` to also *move* the originals
+  into a sibling `<folder>-heic/` folder (mirrored layout, with an
+  `archive-manifest.json`) so the source folder ends up free of the
+  old format.
 
 ## Duplicate definition
 
@@ -74,6 +77,11 @@ dedupe restore ~/Pictures/naomi-slide-show-dups
 # Convert HEIC/HEIF to JPEG (output: ~/Pictures/naomi-slide-show-converted)
 dedupe convert ~/Pictures/naomi-slide-show
 
+# Convert AND archive: HEIC originals move to ~/Pictures/naomi-slide-show-heic/
+# leaving the source folder free of HEIC files. archive-manifest.json records
+# every move.
+dedupe convert ~/Pictures/naomi-slide-show --archive-originals
+
 # Convert PNGs to WebP at quality 85, custom output folder
 dedupe convert ~/Pictures/naomi-slide-show \
   --to webp --quality 85 \
@@ -115,6 +123,8 @@ dedupe convert ~/Pictures/naomi-slide-show \
 | `--quality <N>` | Encoder quality, 1–100 — JPEG/WebP only (default: 92) |
 | `--source-ext <ext>` | Source extension to include, repeatable (default: `.heic` and `.heif`) |
 | `--output-folder <path>` | Output folder (default: `<folder>-converted`) |
+| `--archive-originals` | After each conversion, *move* the original into the archive folder (off by default) |
+| `--archive-folder <path>` | Where to move originals when `--archive-originals` is set (default: `<folder>-heic`) |
 | `--dry-run` | Report only, do not write files |
 | `--recursive` / `--no-recursive` | Recurse into subfolders (default: yes) |
 | `--threads <N>` | Worker threads (default: CPU count) |

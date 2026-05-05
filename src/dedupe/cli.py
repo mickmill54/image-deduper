@@ -189,6 +189,25 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Where to write converted files (default: <folder>-converted)",
     )
     conv_p.add_argument(
+        "--archive-originals",
+        action="store_true",
+        help=(
+            "After each successful conversion, MOVE the original into a "
+            "sibling <folder>-heic folder (mirrored layout). Writes "
+            "archive-manifest.json. Off by default."
+        ),
+    )
+    conv_p.add_argument(
+        "--archive-folder",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help=(
+            "Where to move originals when --archive-originals is set "
+            "(default: <folder>-heic)"
+        ),
+    )
+    conv_p.add_argument(
         "--dry-run",
         action="store_true",
         help="Report what would be converted without writing files",
@@ -451,6 +470,8 @@ def _cmd_convert(args: argparse.Namespace, ui: UI) -> int:
         threads=args.threads,
         include_hidden=args.include_hidden,
         follow_symlinks=args.follow_symlinks,
+        archive_originals=args.archive_originals,
+        archive_folder=args.archive_folder,
     )
 
     try:
@@ -466,17 +487,23 @@ def _cmd_convert(args: argparse.Namespace, ui: UI) -> int:
                 "dry_run": opts.dry_run,
                 "source": str(opts.source),
                 "output_folder": str(opts.output_folder),
+                "archive_originals": opts.archive_originals,
+                "archive_folder": (
+                    str(opts.archive_folder) if opts.archive_folder else None
+                ),
                 "target_format": opts.target_format,
                 "quality": opts.quality,
                 "source_exts": sorted(opts.source_exts),
                 "files_scanned": result.files_scanned,
                 "files_converted": result.files_converted,
                 "files_skipped": result.files_skipped,
+                "files_archived": result.files_archived,
                 "bytes_written": result.bytes_written,
                 "errors": result.errors,
                 "conversions": [
                     {"source": str(s), "output": str(d)} for s, d in result.conversions
                 ],
+                "archive_entries": [e.__dict__ for e in result.archive_entries],
             }
         )
     else:
@@ -490,6 +517,9 @@ def _cmd_convert(args: argparse.Namespace, ui: UI) -> int:
             f"  bytes written:    {result.bytes_written} "
             f"({_format_bytes(result.bytes_written)})"
         )
+        if opts.archive_originals:
+            archive_verb = "would archive" if opts.dry_run else "archived"
+            ui.info(f"  files {archive_verb}: {result.files_archived}")
         if result.files_converted and not opts.dry_run:
             ui.success(f"  output: {opts.output_folder}")
         if result.errors:
