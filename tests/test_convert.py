@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -165,3 +166,138 @@ def test_convert_heic_to_jpeg(heic_tree, tmp_path: Path):
     assert produced.is_file()
     with Image.open(produced) as img:
         assert img.format == "JPEG"
+
+
+# --- archive-originals tests --------------------------------------------
+
+
+def test_archive_off_by_default_originals_remain(convert_tree: Path, tmp_path: Path):
+    """Sanity check: without --archive-originals, source files are untouched."""
+    out = tmp_path / "out"
+    opts = _opts(
+        convert_tree, out, target_format="png", source_exts=frozenset({".jpg"})
+    )
+    run_convert(opts, QUIET)
+    # Source files still present
+    assert (convert_tree / "a.jpg").is_file()
+    assert (convert_tree / "sub" / "c.jpg").is_file()
+    assert opts.archive_folder is None
+    # No archive folder created
+    assert not (convert_tree.parent / f"{convert_tree.name}-heic").exists()
+
+
+def test_archive_originals_moves_sources_and_writes_manifest(
+    convert_tree: Path, tmp_path: Path
+):
+    out = tmp_path / "out"
+    archive = tmp_path / "archive"
+    opts = _opts(
+        convert_tree,
+        out,
+        target_format="png",
+        source_exts=frozenset({".jpg"}),
+        archive_originals=True,
+        archive_folder=archive,
+    )
+    result = run_convert(opts, QUIET)
+
+    assert result.files_converted == 2
+    assert result.files_archived == 2
+
+    # Originals gone from source
+    assert not (convert_tree / "a.jpg").exists()
+    assert not (convert_tree / "sub" / "c.jpg").exists()
+
+    # Originals in archive, mirrored layout
+    assert (archive / "a.jpg").is_file()
+    assert (archive / "sub" / "c.jpg").is_file()
+
+    # Converted outputs present
+    assert (out / "a.png").is_file()
+    assert (out / "sub" / "c.png").is_file()
+
+    # Archive manifest valid JSON with the expected fields
+    manifest_path = archive / "archive-manifest.json"
+    assert manifest_path.is_file()
+    data = json.loads(manifest_path.read_text())
+    assert data["version"] == 1
+    assert data["target_format"] == "png"
+    assert len(data["entries"]) == 2
+    for e in data["entries"]:
+        for k in (
+            "original_path",
+            "archive_path",
+            "converted_to_path",
+            "size_bytes",
+            "timestamp",
+        ):
+            assert k in e
+
+
+def test_archive_default_folder_is_folder_dash_heic(convert_tree: Path, tmp_path: Path):
+    out = tmp_path / "out"
+    opts = _opts(
+        convert_tree,
+        out,
+        target_format="png",
+        source_exts=frozenset({".jpg"}),
+        archive_originals=True,
+        # archive_folder=None — let it default
+    )
+    result = run_convert(opts, QUIET)
+    assert result.files_archived == 2
+
+    expected_archive = convert_tree.parent / f"{convert_tree.name}-heic"
+    assert expected_archive.is_dir()
+    assert (expected_archive / "a.jpg").is_file()
+    assert (expected_archive / "archive-manifest.json").is_file()
+
+
+def test_archive_dry_run_moves_nothing(convert_tree: Path, tmp_path: Path):
+    out = tmp_path / "out"
+    archive = tmp_path / "archive"
+    opts = _opts(
+        convert_tree,
+        out,
+        target_format="png",
+        source_exts=frozenset({".jpg"}),
+        archive_originals=True,
+        archive_folder=archive,
+        dry_run=True,
+    )
+    result = run_convert(opts, QUIET)
+    # files_converted is the planned count in dry-run; archive count stays 0
+    # because the archive pass is skipped (only operates on real conversions)
+    assert result.files_archived == 0
+    assert not archive.exists()
+    # Originals untouched
+    assert (convert_tree / "a.jpg").is_file()
+    assert (convert_tree / "sub" / "c.jpg").is_file()
+
+
+def test_archive_refuses_to_overwrite(convert_tree: Path, tmp_path: Path):
+    out = tmp_path / "out"
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    # Pre-create one of the archive destinations
+    (archive / "a.jpg").write_bytes(b"existing")
+
+    opts = _opts(
+        convert_tree,
+        out,
+        target_format="png",
+        source_exts=frozenset({".jpg"}),
+        archive_originals=True,
+        archive_folder=archive,
+    )
+    result = run_convert(opts, QUIET)
+
+    # 1 original was archived (sub/c.jpg); 1 was blocked (a.jpg)
+    assert result.files_archived == 1
+    assert any("refusing to overwrite archive path" in e for e in result.errors)
+    # Pre-existing file untouched
+    assert (archive / "a.jpg").read_bytes() == b"existing"
+    # Source file that couldn't be archived is still in place
+    assert (convert_tree / "a.jpg").is_file()
+    # Source file that was archived is gone
+    assert not (convert_tree / "sub" / "c.jpg").exists()

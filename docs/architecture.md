@@ -151,15 +151,37 @@ plan output paths          mirror layout into <folder>-converted/, swap extensio
 ThreadPoolExecutor         _convert_one() per pair: open → convert → save
   │  raises FileExistsError if dest already exists (refuse to overwrite)
   ▼
+[optional] archive pass    if --archive-originals:
+                             for each successful conversion, sequentially move
+                             the original into <folder>-heic/ (mirroring
+                             layout) and append an entry to
+                             archive-manifest.json
+  │
+  ▼
 ConvertResult              files_scanned, files_converted, files_skipped,
-                           bytes_written, errors, conversions
+                           bytes_written, files_archived, errors,
+                           conversions, archive_entries
 ```
 
-`convert` never modifies the source folder. The only filesystem mutation
-is `Image.save(dest, ...)` writing to a fresh output path. This is
-enforced by `test_convert_jpg_to_png_mirrors_layout` (asserts originals
-still exist) and `test_refuses_to_overwrite` (asserts a pre-existing
-output is untouched).
+Without `--archive-originals` (the default), `convert` never modifies
+the source folder — the only filesystem mutation is `Image.save(dest,
+...)` writing to a fresh output path.
+
+With `--archive-originals`, originals are **moved** (not deleted) into
+the archive folder via `shutil.move`, and the move is recorded in an
+`archive-manifest.json` flushed-after-every-entry. The archive pass is
+single-threaded and runs *after* the parallel conversion phase, so the
+manifest order matches the conversion order and we don't need a lock
+around manifest writes outside `_ArchiveManifestWriter`'s own lock.
+
+These guarantees are covered by:
+- `test_convert_jpg_to_png_mirrors_layout` — originals untouched without the flag
+- `test_archive_off_by_default_originals_remain` — explicit no-side-effect default
+- `test_archive_originals_moves_sources_and_writes_manifest` — full archive flow
+- `test_archive_default_folder_is_folder_dash_heic` — default name
+- `test_archive_dry_run_moves_nothing` — dry-run respected
+- `test_archive_refuses_to_overwrite` — pre-existing archive path is preserved
+- `test_refuses_to_overwrite` — pre-existing output path is preserved
 
 ## Class diagram
 

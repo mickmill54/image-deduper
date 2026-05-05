@@ -1,19 +1,29 @@
-"""Convert images to a target format. Originals are never modified.
+"""Convert images to a target format. Originals are never modified by default.
 
 Default behavior: walk a folder, find every HEIC/HEIF file, write a
 JPEG copy of each into a sibling `<folder>-converted/` folder mirroring
 the original layout. Originals stay where they are.
 
-Safety: this module never deletes or modifies source files. It only
-writes new files into the output folder, and refuses to overwrite an
-existing output. Same family of guarantees as `scan` and `restore`.
+Optional `archive_originals` mode: after each successful conversion,
+*move* the original into a sibling `<folder>-heic/` folder (also mirroring
+layout) and record the move in an `archive-manifest.json`. This is the
+post-conversion cleanup pattern — the source folder ends up free of the
+old format, but the originals are still on disk and auditable.
+
+Safety: this module never deletes files. With archival off it only
+writes new outputs; with archival on it *moves* originals to the archive
+folder, refusing to overwrite. Same family of guarantees as `scan`.
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import shutil
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 
 from PIL import Image
@@ -43,6 +53,8 @@ TARGET_FORMATS: dict[str, tuple[str, str]] = {
 
 DEFAULT_SOURCE_EXTS = frozenset({".heic", ".heif"})
 DEFAULT_QUALITY = 92
+ARCHIVE_MANIFEST_NAME = "archive-manifest.json"
+ARCHIVE_MANIFEST_VERSION = 1
 
 
 @dataclass(frozen=True)
@@ -57,6 +69,17 @@ class ConvertOptions:
     threads: int = 0
     include_hidden: bool = False
     follow_symlinks: bool = False
+    archive_originals: bool = False
+    archive_folder: Path | None = None
+
+
+@dataclass(frozen=True)
+class ArchiveEntry:
+    original_path: str
+    archive_path: str
+    converted_to_path: str
+    size_bytes: int
+    timestamp: str
 
 
 @dataclass
@@ -65,8 +88,50 @@ class ConvertResult:
     files_converted: int = 0
     files_skipped: int = 0
     bytes_written: int = 0
+    files_archived: int = 0
     errors: list[str] = field(default_factory=list)
     conversions: list[tuple[Path, Path]] = field(default_factory=list)
+    archive_entries: list[ArchiveEntry] = field(default_factory=list)
+
+
+class _ArchiveManifestWriter:
+    """Incremental writer for the archive manifest. Atomic per-entry flush."""
+
+    def __init__(
+        self,
+        path: Path,
+        *,
+        source_folder: Path,
+        archive_folder: Path,
+        output_folder: Path,
+        target_format: str,
+    ) -> None:
+        self.path = path
+        self._lock = threading.Lock()
+        self._payload: dict = {
+            "version": ARCHIVE_MANIFEST_VERSION,
+            "created_at": datetime.now(UTC).isoformat(),
+            "source_folder": str(source_folder.resolve()),
+            "archive_folder": str(archive_folder.resolve()),
+            "output_folder": str(output_folder.resolve()),
+            "target_format": target_format,
+            "entries": [],
+        }
+        self._flush()
+
+    def add(self, entry: ArchiveEntry) -> None:
+        with self._lock:
+            self._payload["entries"].append(asdict(entry))
+            self._flush()
+
+    def _flush(self) -> None:
+        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
+        tmp.parent.mkdir(parents=True, exist_ok=True)
+        with tmp.open("w", encoding="utf-8") as fh:
+            json.dump(self._payload, fh, indent=2, sort_keys=False)
+            fh.write("\n")
+            fh.flush()
+        tmp.replace(self.path)
 
 
 def _eligible(path: Path, source_exts: frozenset[str]) -> bool:
@@ -90,6 +155,12 @@ def _mirror_destination(
     """source/foo/x.heic -> output_folder/foo/x.jpg (extension swap)."""
     rel = original.resolve().relative_to(source.resolve())
     return (output_folder / rel).with_suffix(target_ext)
+
+
+def _archive_destination(original: Path, source: Path, archive_folder: Path) -> Path:
+    """source/foo/x.heic -> archive_folder/foo/x.heic (extension preserved)."""
+    rel = original.resolve().relative_to(source.resolve())
+    return archive_folder / rel
 
 
 def _rel(path: Path, base: Path) -> str:
@@ -218,4 +289,87 @@ def run_convert(opts: ConvertOptions, ui: UI) -> ConvertResult:
             )
             progress.advance(current=src.name)
 
+    # Phase 2: archive originals (sequential — file moves on the same FS,
+    # incremental manifest flush, simpler reasoning than threading moves).
+    if opts.archive_originals and result.conversions:
+        _archive_originals_pass(opts, result, ui)
+
     return result
+
+
+def _archive_originals_pass(
+    opts: ConvertOptions, result: ConvertResult, ui: UI
+) -> None:
+    """Move each successfully-converted original into the archive folder.
+
+    Uses a fresh manifest for the archive run; refuses to overwrite existing
+    archive paths. In dry-run mode reports the planned moves without touching
+    the filesystem.
+    """
+    archive_folder = opts.archive_folder
+    if archive_folder is None:
+        archive_folder = opts.source.parent / f"{opts.source.name}-heic"
+
+    if opts.dry_run:
+        ui.info("")
+        ui.info(f"[bold]Would archive {len(result.conversions)} original(s) to "
+                f"{archive_folder}[/bold]")
+        for src, _dest in result.conversions:
+            archive_dest = _archive_destination(src, opts.source, archive_folder)
+            ui.info(
+                f"  [dim]→[/dim] would move "
+                f"[yellow]{_rel(src, opts.source)}[/yellow] → "
+                f"[green]{_rel(archive_dest, archive_folder)}[/green] (in archive)"
+            )
+        return
+
+    archive_folder.mkdir(parents=True, exist_ok=True)
+    manifest = _ArchiveManifestWriter(
+        path=archive_folder / ARCHIVE_MANIFEST_NAME,
+        source_folder=opts.source,
+        archive_folder=archive_folder,
+        output_folder=opts.output_folder,
+        target_format=opts.target_format,
+    )
+
+    ui.info("")
+    ui.info(f"[bold]Archiving {len(result.conversions)} original(s) to "
+            f"{archive_folder}[/bold]")
+
+    for src, converted_dest in result.conversions:
+        archive_dest = _archive_destination(src, opts.source, archive_folder)
+        if archive_dest.exists():
+            msg = f"refusing to overwrite archive path: {archive_dest}"
+            result.errors.append(msg)
+            ui.error(msg)
+            continue
+        try:
+            size = src.stat().st_size
+        except OSError as exc:
+            msg = f"stat failed for {src}: {exc}"
+            result.errors.append(msg)
+            ui.error(msg)
+            continue
+        try:
+            archive_dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(src), str(archive_dest))
+        except OSError as exc:
+            msg = f"archive move failed for {src} -> {archive_dest}: {exc}"
+            result.errors.append(msg)
+            ui.error(msg)
+            continue
+
+        entry = ArchiveEntry(
+            original_path=str(src),
+            archive_path=str(archive_dest),
+            converted_to_path=str(converted_dest),
+            size_bytes=size,
+            timestamp=datetime.now(UTC).isoformat(),
+        )
+        manifest.add(entry)
+        result.archive_entries.append(entry)
+        result.files_archived += 1
+        ui.detail(
+            f"    archived {_rel(src, opts.source)} → "
+            f"{_rel(archive_dest, archive_folder)}"
+        )
