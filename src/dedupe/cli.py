@@ -203,8 +203,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="PATH",
         help=(
-            "Where to move originals when --archive-originals is set "
-            "(default: <folder>-heic)"
+            "Where to move originals when --archive-originals is set " "(default: <folder>-heic)"
         ),
     )
     conv_p.add_argument(
@@ -470,9 +469,7 @@ def _cmd_convert(args: argparse.Namespace, ui: UI) -> int:
     if args.in_place:
         output_folder = folder
     else:
-        output_folder = (
-            args.output_folder or folder.parent / f"{folder.name}-converted"
-        )
+        output_folder = args.output_folder or folder.parent / f"{folder.name}-converted"
 
     archive_originals = args.archive_originals or args.in_place
 
@@ -513,9 +510,7 @@ def _cmd_convert(args: argparse.Namespace, ui: UI) -> int:
                 "source": str(opts.source),
                 "output_folder": str(opts.output_folder),
                 "archive_originals": opts.archive_originals,
-                "archive_folder": (
-                    str(opts.archive_folder) if opts.archive_folder else None
-                ),
+                "archive_folder": (str(opts.archive_folder) if opts.archive_folder else None),
                 "target_format": opts.target_format,
                 "quality": opts.quality,
                 "source_exts": sorted(opts.source_exts),

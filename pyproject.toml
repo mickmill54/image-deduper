@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dedupe"
-version = "0.4.0"
+version = "0.4.1"
 description = "Find and quarantine duplicate image files for slideshow curation"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -22,7 +22,13 @@ dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
     "ruff>=0.6",
+    "pre-commit>=3.7",
 ]
+
+[project.urls]
+Homepage = "https://github.com/mickmill54/image-deduper"
+Issues = "https://github.com/mickmill54/image-deduper/issues"
+Changelog = "https://github.com/mickmill54/image-deduper/blob/main/CHANGELOG.md"
 
 [project.scripts]
 dedupe = "dedupe.cli:main"

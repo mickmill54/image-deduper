@@ -8,6 +8,25 @@ Version bumps follow the conventional-commits convention described in `CLAUDE.md
 
 ## [Unreleased]
 
+## [0.4.1](https://github.com/mickmill54/image-deduper/releases/tag/v0.4.1) — 2026-05-05
+
+Polish release bundling three quick-win backlog items. No CLI behavior change.
+
+### Added
+- **`[project.urls]`** in `pyproject.toml` (Homepage, Issues, Changelog)
+  so `pip show dedupe` and any future PyPI listing surface the right links.
+  Closes #2.
+- **Pre-commit hooks** (`.pre-commit-config.yaml`) running `ruff check
+  --fix`, `ruff format`, and pre-commit-hooks' standard hygiene hooks
+  (trailing whitespace, EOF newline, YAML/TOML syntax, merge-conflict
+  markers, large-file guard at 500 KB). `pre-commit` added to the dev
+  dependency group; `make setup` now also runs `pre-commit install`.
+  New `make hooks` target re-installs them on demand. Closes #3.
+- **`make coverage`** — runs `pytest --cov=dedupe --cov-report=term-missing
+  --cov-report=html`. HTML output lands at `htmlcov/index.html` (already
+  in `.gitignore`). `make clean` cleans up coverage artifacts as well.
+  Closes #4.
+
 ## [0.4.0](https://github.com/mickmill54/image-deduper/releases/tag/v0.4.0) — 2026-05-05
 
 ### Added

@@ -180,12 +180,20 @@ Hidden files (`.DS_Store`, dotfiles) are skipped by default. Pass
 ## Development
 
 ```bash
-make help     # list commands
-make test     # run pytest
-make lint     # ruff check
-make format   # ruff format + auto-fix
-make clean    # remove venv and caches
+make help        # list commands
+make test        # run pytest
+make coverage    # pytest + coverage HTML report at htmlcov/index.html
+make lint        # ruff check
+make format      # ruff format + auto-fix
+make hooks       # (re)install pre-commit hooks
+make clean       # remove venv, caches, build/coverage artifacts
 ```
+
+`make setup` installs pre-commit hooks into `.git/hooks/` automatically, so
+`ruff check`, `ruff format`, and a few standard hygiene hooks (trailing
+whitespace, end-of-file newline, YAML/TOML syntax, merge-conflict markers,
+large-file detection) run on every `git commit`. Bypass once with
+`git commit --no-verify` if you need to.
 
 The Makefile also exposes the CLI as named targets, so you don't have to
 remember the flag layout:

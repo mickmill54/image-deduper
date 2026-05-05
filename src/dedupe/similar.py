@@ -226,8 +226,9 @@ def _write_html_report(result: SimilarResult, opts: SimilarOptions, ui: UI) -> N
             if data_uri:
                 parts.append(f"<img src='{data_uri}' alt=''>")
             else:
-                parts.append("<div class='thumb' style='width:240px;height:240px'>"
-                             "(no preview)</div>")
+                parts.append(
+                    "<div class='thumb' style='width:240px;height:240px'>" "(no preview)</div>"
+                )
             parts.append(f"<div class='path'>{html.escape(str(path))}</div>")
             parts.append("</div>")
         parts.append("</div></section>")

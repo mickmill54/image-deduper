@@ -149,9 +149,7 @@ def _scan_options_for(opts: ConvertOptions) -> ScanOptions:
     )
 
 
-def _mirror_destination(
-    original: Path, source: Path, output_folder: Path, target_ext: str
-) -> Path:
+def _mirror_destination(original: Path, source: Path, output_folder: Path, target_ext: str) -> Path:
     """source/foo/x.heic -> output_folder/foo/x.jpg (extension swap)."""
     rel = original.resolve().relative_to(source.resolve())
     return (output_folder / rel).with_suffix(target_ext)
@@ -225,10 +223,7 @@ def run_convert(opts: ConvertOptions, ui: UI) -> ConvertResult:
 
     all_files = sorted(iter_image_files(_scan_options_for(opts)))
     eligible = [p for p in all_files if _eligible(p, opts.source_exts)]
-    ui.detail(
-        f"found {len(all_files)} image file(s), "
-        f"{len(eligible)} eligible for conversion"
-    )
+    ui.detail(f"found {len(all_files)} image file(s), " f"{len(eligible)} eligible for conversion")
 
     result = ConvertResult(files_scanned=len(eligible))
     if not eligible:
@@ -297,9 +292,7 @@ def run_convert(opts: ConvertOptions, ui: UI) -> ConvertResult:
     return result
 
 
-def _archive_originals_pass(
-    opts: ConvertOptions, result: ConvertResult, ui: UI
-) -> None:
+def _archive_originals_pass(opts: ConvertOptions, result: ConvertResult, ui: UI) -> None:
     """Move each successfully-converted original into the archive folder.
 
     Uses a fresh manifest for the archive run; refuses to overwrite existing
@@ -312,8 +305,10 @@ def _archive_originals_pass(
 
     if opts.dry_run:
         ui.info("")
-        ui.info(f"[bold]Would archive {len(result.conversions)} original(s) to "
-                f"{archive_folder}[/bold]")
+        ui.info(
+            f"[bold]Would archive {len(result.conversions)} original(s) to "
+            f"{archive_folder}[/bold]"
+        )
         for src, _dest in result.conversions:
             archive_dest = _archive_destination(src, opts.source, archive_folder)
             ui.info(
@@ -333,8 +328,7 @@ def _archive_originals_pass(
     )
 
     ui.info("")
-    ui.info(f"[bold]Archiving {len(result.conversions)} original(s) to "
-            f"{archive_folder}[/bold]")
+    ui.info(f"[bold]Archiving {len(result.conversions)} original(s) to " f"{archive_folder}[/bold]")
 
     for src, converted_dest in result.conversions:
         archive_dest = _archive_destination(src, opts.source, archive_folder)
@@ -370,6 +364,5 @@ def _archive_originals_pass(
         result.archive_entries.append(entry)
         result.files_archived += 1
         ui.detail(
-            f"    archived {_rel(src, opts.source)} → "
-            f"{_rel(archive_dest, archive_folder)}"
+            f"    archived {_rel(src, opts.source)} → " f"{_rel(archive_dest, archive_folder)}"
         )

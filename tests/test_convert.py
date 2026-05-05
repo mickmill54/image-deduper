@@ -38,9 +38,7 @@ def test_default_source_exts_match_heic_family():
 
 def test_unsupported_target_format_raises(convert_tree: Path, tmp_path: Path):
     out = tmp_path / "out"
-    opts = _opts(
-        convert_tree, out, target_format="bogus", source_exts=frozenset({".jpg"})
-    )
+    opts = _opts(convert_tree, out, target_format="bogus", source_exts=frozenset({".jpg"}))
     with pytest.raises(ValueError, match="unsupported target format"):
         run_convert(opts, QUIET)
 
@@ -65,9 +63,7 @@ def test_no_eligible_files_returns_clean_result(convert_tree: Path, tmp_path: Pa
 
 def test_convert_jpg_to_png_mirrors_layout(convert_tree: Path, tmp_path: Path):
     out = tmp_path / "out"
-    opts = _opts(
-        convert_tree, out, target_format="png", source_exts=frozenset({".jpg"})
-    )
+    opts = _opts(convert_tree, out, target_format="png", source_exts=frozenset({".jpg"}))
     result = run_convert(opts, QUIET)
 
     # a.jpg + sub/c.jpg are eligible (hidden file skipped, png/bmp not in source_exts)
@@ -102,9 +98,7 @@ def test_refuses_to_overwrite(convert_tree: Path, tmp_path: Path):
     # Pre-create an output collision
     (out / "a.png").write_bytes(b"existing")
 
-    opts = _opts(
-        convert_tree, out, target_format="png", source_exts=frozenset({".jpg"})
-    )
+    opts = _opts(convert_tree, out, target_format="png", source_exts=frozenset({".jpg"}))
     result = run_convert(opts, QUIET)
 
     # 1 success (sub/c.jpg), 1 skip (a.jpg collision)
@@ -119,9 +113,7 @@ def test_refuses_to_overwrite(convert_tree: Path, tmp_path: Path):
 
 def test_hidden_skipped_by_default(convert_tree: Path, tmp_path: Path):
     out = tmp_path / "out"
-    opts = _opts(
-        convert_tree, out, target_format="png", source_exts=frozenset({".jpg"})
-    )
+    opts = _opts(convert_tree, out, target_format="png", source_exts=frozenset({".jpg"}))
     result = run_convert(opts, QUIET)
     converted_names = {Path(s).name for s, _ in result.conversions}
     assert ".hidden.jpg" not in converted_names
@@ -143,9 +135,7 @@ def test_hidden_included_with_flag(convert_tree: Path, tmp_path: Path):
 
 def test_jpeg_output_is_valid_image(convert_tree: Path, tmp_path: Path):
     out = tmp_path / "out"
-    opts = _opts(
-        convert_tree, out, target_format="jpeg", source_exts=frozenset({".png"})
-    )
+    opts = _opts(convert_tree, out, target_format="jpeg", source_exts=frozenset({".png"}))
     run_convert(opts, QUIET)
     produced = out / "b.jpg"
     assert produced.is_file()
@@ -174,9 +164,7 @@ def test_convert_heic_to_jpeg(heic_tree, tmp_path: Path):
 def test_archive_off_by_default_originals_remain(convert_tree: Path, tmp_path: Path):
     """Sanity check: without --archive-originals, source files are untouched."""
     out = tmp_path / "out"
-    opts = _opts(
-        convert_tree, out, target_format="png", source_exts=frozenset({".jpg"})
-    )
+    opts = _opts(convert_tree, out, target_format="png", source_exts=frozenset({".jpg"}))
     run_convert(opts, QUIET)
     # Source files still present
     assert (convert_tree / "a.jpg").is_file()
@@ -186,9 +174,7 @@ def test_archive_off_by_default_originals_remain(convert_tree: Path, tmp_path: P
     assert not (convert_tree.parent / f"{convert_tree.name}-heic").exists()
 
 
-def test_archive_originals_moves_sources_and_writes_manifest(
-    convert_tree: Path, tmp_path: Path
-):
+def test_archive_originals_moves_sources_and_writes_manifest(convert_tree: Path, tmp_path: Path):
     out = tmp_path / "out"
     archive = tmp_path / "archive"
     opts = _opts(
@@ -275,9 +261,7 @@ def test_archive_dry_run_moves_nothing(convert_tree: Path, tmp_path: Path):
     assert (convert_tree / "sub" / "c.jpg").is_file()
 
 
-def test_in_place_via_options_writes_to_source_and_archives(
-    convert_tree: Path, tmp_path: Path
-):
+def test_in_place_via_options_writes_to_source_and_archives(convert_tree: Path, tmp_path: Path):
     """Direct ConvertOptions equivalent of `--in-place`: output_folder == source."""
     archive = tmp_path / "archive"
     opts = _opts(
