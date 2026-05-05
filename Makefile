@@ -4,7 +4,7 @@ VENV := .venv
 PY := $(VENV)/bin/python
 PIP := $(VENV)/bin/pip
 
-.PHONY: help setup test coverage lint format run clean dedupe heic-convert convert hooks
+.PHONY: help setup test coverage lint format typecheck build run clean dedupe heic-convert convert hooks
 
 # Most action targets accept a FOLDER variable. Override per-call:
 #   make heic-convert FOLDER=~/Desktop/naomi-slide-show
@@ -53,6 +53,15 @@ format: ## Auto-format with ruff
 	$(VENV)/bin/ruff format src tests
 	$(VENV)/bin/ruff check --fix src tests
 
+typecheck: ## Static type-check with pyright
+	$(VENV)/bin/pyright
+
+build: ## Build wheel + sdist into dist/
+	$(VENV)/bin/python -m build
+	@echo ""
+	@echo "Artifacts in dist/:"
+	@ls -1 dist/
+
 run: ## Show usage hint
 	@echo "dedupe needs a folder argument. Try:"
 	@echo "  dedupe scan <folder>"
@@ -84,6 +93,7 @@ convert: ## Generic convert; honors TO=jpeg|png|webp, QUALITY=N, ARGS=...
 
 clean: ## Remove venv, caches, build artifacts, coverage output
 	rm -rf $(VENV) build dist *.egg-info src/*.egg-info htmlcov .coverage
+	rm -rf .pyright
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name .pytest_cache -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name .ruff_cache -exec rm -rf {} + 2>/dev/null || true

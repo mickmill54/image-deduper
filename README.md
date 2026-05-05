@@ -35,7 +35,7 @@ should make by eye, not by hash.
 
 ## Install
 
-From a fresh clone:
+From a fresh clone (most common, gets the dev environment too):
 
 ```bash
 git clone git@github.com:mickmill54/image-deduper.git
@@ -45,6 +45,17 @@ source .venv/bin/activate
 dedupe --help
 ```
 
+Or, install a specific tagged release without cloning the dev tree (useful on
+a second machine or in a script). Either via pip + git tag:
+
+```bash
+pip install git+https://github.com/mickmill54/image-deduper.git@v0.5.1
+```
+
+…or by downloading the wheel from a GitHub release page (under the "Assets"
+section) and `pip install`-ing the local file. Each release ships a
+`dedupe-X.Y.Z-py3-none-any.whl` and an sdist tarball.
+
 Or if you already have the source:
 
 ```bash
@@ -53,8 +64,9 @@ source .venv/bin/activate
 dedupe --help
 ```
 
-`make setup` creates `.venv`, installs the package in editable mode, and pulls
-in `pillow-heif` so `.heic` photos from iPhone are supported.
+`make setup` creates `.venv`, installs the package in editable mode, pulls in
+`pillow-heif` so `.heic` photos from iPhone are supported, and installs the
+pre-commit hooks.
 
 ## Usage
 
@@ -210,6 +222,8 @@ make test        # run pytest
 make coverage    # pytest + coverage HTML report at htmlcov/index.html
 make lint        # ruff check
 make format      # ruff format + auto-fix
+make typecheck   # static type-check with pyright
+make build       # build wheel + sdist into dist/
 make hooks       # (re)install pre-commit hooks
 make clean       # remove venv, caches, build/coverage artifacts
 ```

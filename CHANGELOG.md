@@ -8,6 +8,32 @@ Version bumps follow the conventional-commits convention described in `CLAUDE.md
 
 ## [Unreleased]
 
+## [0.5.1](https://github.com/mickmill54/image-deduper/releases/tag/v0.5.1) — 2026-05-05
+
+Release-engineering polish. No CLI behavior change.
+
+### Added
+- **Pyright type-check in CI.** New `pyrightconfig.json` (basic mode,
+  Python 3.11+ target). `pyright` added to dev deps; new `make
+  typecheck` target. CI runs pyright on every push/PR. Codebase passes
+  with 0 errors. Closes #8.
+- **Wheel + sdist attached to every GitHub release.** New `release`
+  job in CI that fires only on `v*` tag pushes: it builds with
+  `python -m build`, then uploads `dist/*.whl` and `dist/*.tar.gz` to
+  the matching release page. The job creates the release with
+  auto-generated notes if one doesn't exist yet, otherwise uploads to
+  the existing release. `build` added to dev deps; new `make build`
+  target. Closes #9.
+
+### Changed
+- `src/dedupe/ui.py`: `_RichProgress.__init__` now takes
+  `rich.progress.TaskID` instead of `int` to match what
+  `Progress.add_task` actually returns. Behavior unchanged; pyright
+  was the only thing that noticed.
+- README install section adds a "from a tagged release" path:
+  `pip install git+https://github.com/.../image-deduper.git@vX.Y.Z`
+  or download the wheel asset from the release page.
+
 ## [0.5.0](https://github.com/mickmill54/image-deduper/releases/tag/v0.5.0) — 2026-05-05
 
 ### Added
