@@ -146,6 +146,87 @@ def _build_parser() -> argparse.ArgumentParser:
     rst_p.add_argument("dups_folder", type=Path, help="Quarantine folder containing manifest.json")
     rst_p.set_defaults(func=_cmd_restore)
 
+    # convert
+    conv_p = sub.add_parser(
+        "convert",
+        help="Convert images to a target format (originals untouched)",
+        description=(
+            "Walk a folder for HEIC/HEIF images (by default) and write a "
+            "converted copy of each into a sibling <folder>-converted folder, "
+            "mirroring the original layout. Originals are never modified."
+        ),
+    )
+    _add_global_flags(conv_p)
+    conv_p.add_argument("folder", type=Path, help="Folder to scan for convertible images")
+    conv_p.add_argument(
+        "--to",
+        dest="target_format",
+        default="jpeg",
+        choices=["jpeg", "jpg", "png", "webp"],
+        help="Target format (default: jpeg)",
+    )
+    conv_p.add_argument(
+        "--quality",
+        type=int,
+        default=92,
+        metavar="N",
+        help="Encoder quality 1-100 (JPEG/WebP only; default: 92)",
+    )
+    conv_p.add_argument(
+        "--source-ext",
+        action="append",
+        metavar="EXT",
+        help=(
+            "Source extension to include (repeatable, leading dot optional). "
+            "Default: .heic and .heif"
+        ),
+    )
+    conv_p.add_argument(
+        "--output-folder",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="Where to write converted files (default: <folder>-converted)",
+    )
+    conv_p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report what would be converted without writing files",
+    )
+    conv_recurse = conv_p.add_mutually_exclusive_group()
+    conv_recurse.add_argument(
+        "--recursive",
+        "-r",
+        dest="recursive",
+        action="store_true",
+        default=True,
+        help="Recurse into subdirectories (default)",
+    )
+    conv_recurse.add_argument(
+        "--no-recursive",
+        dest="recursive",
+        action="store_false",
+        help="Do not recurse into subdirectories",
+    )
+    conv_p.add_argument(
+        "--threads",
+        type=int,
+        default=_default_threads(),
+        metavar="N",
+        help=f"Worker threads for conversion (default: {_default_threads()})",
+    )
+    conv_p.add_argument(
+        "--include-hidden",
+        action="store_true",
+        help="Include dotfiles (default: skip)",
+    )
+    conv_p.add_argument(
+        "--follow-symlinks",
+        action="store_true",
+        help="Follow symlinks (default: skip)",
+    )
+    conv_p.set_defaults(func=_cmd_convert)
+
     return parser
 
 
@@ -336,6 +417,85 @@ def _cmd_restore(args: argparse.Namespace, ui: UI) -> int:
             ui.warn(f"completed with {len(result.errors)} error(s)")
 
     return EXIT_PARTIAL if result.errors or result.conflicts else EXIT_OK
+
+
+def _cmd_convert(args: argparse.Namespace, ui: UI) -> int:
+    # Lazy import: keeps Pillow out of the import path of the other commands.
+    from dedupe.convert import (  # noqa: PLC0415
+        DEFAULT_SOURCE_EXTS,
+        ConvertOptions,
+        run_convert,
+    )
+
+    folder: Path = args.folder
+    output_folder: Path = (
+        args.output_folder or folder.parent / f"{folder.name}-converted"
+    )
+
+    if args.source_ext:
+        # Normalize: lowercase, ensure leading dot.
+        source_exts = frozenset(
+            (e if e.startswith(".") else f".{e}").lower() for e in args.source_ext
+        )
+    else:
+        source_exts = DEFAULT_SOURCE_EXTS
+
+    opts = ConvertOptions(
+        source=folder,
+        output_folder=output_folder,
+        target_format=args.target_format,
+        quality=args.quality,
+        source_exts=source_exts,
+        dry_run=args.dry_run,
+        recursive=args.recursive,
+        threads=args.threads,
+        include_hidden=args.include_hidden,
+        follow_symlinks=args.follow_symlinks,
+    )
+
+    try:
+        result = run_convert(opts, ui)
+    except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
+        ui.error(str(exc))
+        return EXIT_ERROR
+
+    if ui.config.json_mode:
+        ui.emit_json(
+            {
+                "command": "convert",
+                "dry_run": opts.dry_run,
+                "source": str(opts.source),
+                "output_folder": str(opts.output_folder),
+                "target_format": opts.target_format,
+                "quality": opts.quality,
+                "source_exts": sorted(opts.source_exts),
+                "files_scanned": result.files_scanned,
+                "files_converted": result.files_converted,
+                "files_skipped": result.files_skipped,
+                "bytes_written": result.bytes_written,
+                "errors": result.errors,
+                "conversions": [
+                    {"source": str(s), "output": str(d)} for s, d in result.conversions
+                ],
+            }
+        )
+    else:
+        verb = "would convert" if opts.dry_run else "converted"
+        ui.info("")
+        ui.info("[bold]Summary[/bold]")
+        ui.info(f"  files scanned:    {result.files_scanned}")
+        ui.info(f"  files {verb}: {result.files_converted}")
+        ui.info(f"  files skipped:    {result.files_skipped}")
+        ui.info(
+            f"  bytes written:    {result.bytes_written} "
+            f"({_format_bytes(result.bytes_written)})"
+        )
+        if result.files_converted and not opts.dry_run:
+            ui.success(f"  output: {opts.output_folder}")
+        if result.errors:
+            ui.warn(f"completed with {len(result.errors)} error(s)")
+
+    return EXIT_PARTIAL if result.errors else EXIT_OK
 
 
 # --- entrypoint --------------------------------------------------------

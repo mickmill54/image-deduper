@@ -78,6 +78,55 @@ def fixture_tree(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def convert_tree(tmp_path: Path) -> Path:
+    """Folder with a mix of files for convert tests.
+
+    Layout:
+        root/
+          a.jpg                   (red)
+          b.png                   (green)
+          sub/c.jpg               (blue)
+          sub/d.bmp               (yellow)
+          .hidden.jpg             (skipped unless --include-hidden)
+    """
+    root = tmp_path / "convert_root"
+    _make_image(root / "a.jpg", (200, 30, 30))
+    _make_png(root / "b.png", (30, 200, 30))
+    _make_image(root / "sub/c.jpg", (30, 30, 200))
+    (root / "sub").mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (32, 32), (220, 200, 30)).save(root / "sub/d.bmp", format="BMP")
+    _make_image(root / ".hidden.jpg", (50, 50, 50))
+    return root
+
+
+@pytest.fixture
+def heic_tree(tmp_path: Path) -> Path | None:
+    """Folder with one HEIC file, or None if writing HEIC isn't supported.
+
+    Tests using this fixture skip when it returns None — pillow-heif builds
+    sometimes lack the HEIF encoder.
+    """
+    try:
+        import pillow_heif  # noqa: PLC0415 — optional dep, deferred to fixture call
+
+        pillow_heif.register_heif_opener()
+    except Exception:
+        return None
+
+    root = tmp_path / "heic_root"
+    root.mkdir()
+    img = Image.new("RGB", (64, 64), (180, 60, 60))
+    target = root / "photo.heic"
+    try:
+        img.save(target, format="HEIF")
+    except Exception:
+        return None
+    if not target.is_file() or target.stat().st_size == 0:
+        return None
+    return root
+
+
+@pytest.fixture
 def similar_tree(tmp_path: Path) -> Path:
     """A folder with visually-similar but byte-different images for find-similar tests.
 
