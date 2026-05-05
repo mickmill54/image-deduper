@@ -4,7 +4,7 @@ VENV := .venv
 PY := $(VENV)/bin/python
 PIP := $(VENV)/bin/pip
 
-.PHONY: help setup test coverage lint format typecheck build run clean dedupe heic-convert convert hooks
+.PHONY: help setup test coverage lint format typecheck build binary run clean dedupe heic-convert convert hooks
 
 # Most action targets accept a FOLDER variable. Override per-call:
 #   make heic-convert FOLDER=~/Desktop/naomi-slide-show
@@ -62,6 +62,19 @@ build: ## Build wheel + sdist into dist/
 	@echo "Artifacts in dist/:"
 	@ls -1 dist/
 
+binary: ## Build single-file standalone binary at dist/dedupe (PyInstaller)
+	$(VENV)/bin/pyinstaller \
+		--onefile \
+		--name dedupe \
+		--clean \
+		--noconfirm \
+		--hidden-import pillow_heif \
+		--hidden-import imagehash \
+		src/dedupe/__main__.py
+	@echo ""
+	@echo "Standalone binary at: dist/dedupe"
+	@./dist/dedupe --version || true
+
 run: ## Show usage hint
 	@echo "dedupe needs a folder argument. Try:"
 	@echo "  dedupe scan <folder>"
@@ -93,7 +106,7 @@ convert: ## Generic convert; honors TO=jpeg|png|webp, QUALITY=N, ARGS=...
 
 clean: ## Remove venv, caches, build artifacts, coverage output
 	rm -rf $(VENV) build dist *.egg-info src/*.egg-info htmlcov .coverage
-	rm -rf .pyright
+	rm -rf .pyright dedupe.spec
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name .pytest_cache -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name .ruff_cache -exec rm -rf {} + 2>/dev/null || true
