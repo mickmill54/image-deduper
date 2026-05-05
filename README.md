@@ -187,4 +187,4 @@ convert` honors `TO=...` for any of `jpeg`, `png`, or `webp`.
 
 ## License
 
-MIT
+MIT — see [`LICENSE`](LICENSE) for the full text.
