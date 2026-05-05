@@ -99,9 +99,7 @@ def test_cli_convert_in_place_end_to_end(convert_tree: Path):
     assert (archive / "archive-manifest.json").is_file()
 
 
-def test_cli_convert_in_place_conflicts_with_output_folder(
-    convert_tree: Path, tmp_path: Path
-):
+def test_cli_convert_in_place_conflicts_with_output_folder(convert_tree: Path, tmp_path: Path):
     rc = main(
         [
             "convert",

@@ -122,9 +122,7 @@ def _rel(path: Path, source: Path) -> str:
         return str(path)
 
 
-def _hash_all(
-    files: list[Path], threads: int, ui: UI
-) -> tuple[dict[str, list[Path]], list[str]]:
+def _hash_all(files: list[Path], threads: int, ui: UI) -> tuple[dict[str, list[Path]], list[str]]:
     """Hash every file. Returns (hash -> [paths], errors)."""
     groups: dict[str, list[Path]] = {}
     errors: list[str] = []
@@ -297,8 +295,7 @@ def _process_loser(
         return None
 
     ui.detail(
-        f"    moved {_rel(loser, opts.source)} → "
-        f"{_rel(dest, opts.dups_folder)} (in dups)"
+        f"    moved {_rel(loser, opts.source)} → " f"{_rel(dest, opts.dups_folder)} (in dups)"
     )
 
     if manifest_writer is not None:

@@ -51,9 +51,7 @@ class ManifestEntry:
 class Manifest:
     source_folder: str
     dups_folder: str
-    created_at: str = field(
-        default_factory=lambda: datetime.now(UTC).isoformat()
-    )
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     version: int = MANIFEST_VERSION
     entries: list[ManifestEntry] = field(default_factory=list)
 
@@ -123,9 +121,7 @@ def load(path: Path) -> Manifest:
 
     version = data.get("version")
     if version != MANIFEST_VERSION:
-        raise ValueError(
-            f"unsupported manifest version: {version!r} (expected {MANIFEST_VERSION})"
-        )
+        raise ValueError(f"unsupported manifest version: {version!r} (expected {MANIFEST_VERSION})")
 
     raw_entries = data.get("entries", [])
     if not isinstance(raw_entries, list):

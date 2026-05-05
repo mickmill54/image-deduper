@@ -4,7 +4,7 @@ VENV := .venv
 PY := $(VENV)/bin/python
 PIP := $(VENV)/bin/pip
 
-.PHONY: help setup test lint format run clean dedupe heic-convert convert
+.PHONY: help setup test coverage lint format run clean dedupe heic-convert convert hooks
 
 # Most action targets accept a FOLDER variable. Override per-call:
 #   make heic-convert FOLDER=~/Desktop/naomi-slide-show
@@ -27,15 +27,24 @@ help: ## List available commands
 	@echo ""
 	@echo "After 'make setup', activate with: source $(VENV)/bin/activate"
 
-setup: ## Create venv and install package + deps in editable mode
+setup: ## Create venv, install package + dev deps, install pre-commit hooks
 	python3 -m venv $(VENV)
 	$(PIP) install --upgrade pip
 	$(PIP) install -e ".[dev]"
+	$(VENV)/bin/pre-commit install
 	@echo ""
 	@echo "Done. Run: source $(VENV)/bin/activate && dedupe --help"
 
+hooks: ## (Re)install pre-commit hooks into .git/hooks
+	$(VENV)/bin/pre-commit install
+
 test: ## Run pytest
 	$(VENV)/bin/pytest -v
+
+coverage: ## Run pytest with coverage; HTML report at htmlcov/index.html
+	$(VENV)/bin/pytest --cov=dedupe --cov-report=term-missing --cov-report=html
+	@echo ""
+	@echo "HTML coverage report: htmlcov/index.html"
 
 lint: ## Lint with ruff
 	$(VENV)/bin/ruff check src tests
@@ -73,8 +82,8 @@ convert: ## Generic convert; honors TO=jpeg|png|webp, QUALITY=N, ARGS=...
 	$(call check_folder,convert)
 	$(VENV)/bin/dedupe convert "$(FOLDER)" --to $(TO) --quality $(QUALITY) $(ARGS)
 
-clean: ## Remove venv, caches, build artifacts
-	rm -rf $(VENV) build dist *.egg-info src/*.egg-info
+clean: ## Remove venv, caches, build artifacts, coverage output
+	rm -rf $(VENV) build dist *.egg-info src/*.egg-info htmlcov .coverage
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name .pytest_cache -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name .ruff_cache -exec rm -rf {} + 2>/dev/null || true
