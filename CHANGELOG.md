@@ -8,6 +8,24 @@ Version bumps follow the conventional-commits convention described in `CLAUDE.md
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/mickmill54/image-deduper/releases/tag/v0.6.0) — 2026-05-05
+
+### Added
+- **macOS standalone binary** (`dedupe-macos-arm64`) attached to every
+  tagged release. Single ~40 MB file that bundles Python + Pillow +
+  imagehash + pillow-heif via PyInstaller — recipients don't need
+  Python installed. Apple Silicon only; Intel Macs and Linux/Windows
+  binaries are out of scope for this release. Closes #20.
+- New `make binary` target builds the binary locally at `dist/dedupe`.
+- New `build-binary-macos` CI job runs on `macos-latest` for `v*`
+  tags, builds + smoke-tests + uploads to the release.
+- README install section gains a "macOS standalone binary" path with
+  a Gatekeeper-quarantine workaround note.
+
+### Changed
+- `pyinstaller>=6.0` added to dev deps.
+- `make clean` now also removes `dedupe.spec` (PyInstaller's spec file).
+
 ## [0.5.1](https://github.com/mickmill54/image-deduper/releases/tag/v0.5.1) — 2026-05-05
 
 Release-engineering polish. No CLI behavior change.

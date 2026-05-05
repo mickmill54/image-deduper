@@ -49,12 +49,38 @@ Or, install a specific tagged release without cloning the dev tree (useful on
 a second machine or in a script). Either via pip + git tag:
 
 ```bash
-pip install git+https://github.com/mickmill54/image-deduper.git@v0.5.1
+pip install git+https://github.com/mickmill54/image-deduper.git@v0.6.0
 ```
 
 …or by downloading the wheel from a GitHub release page (under the "Assets"
 section) and `pip install`-ing the local file. Each release ships a
 `dedupe-X.Y.Z-py3-none-any.whl` and an sdist tarball.
+
+### macOS standalone binary (no Python required)
+
+Each release also ships **`dedupe-macos-arm64`** — a single-file executable
+that bundles Python + dependencies. Just download, mark it executable, and
+run. Apple Silicon only (M1/M2/M3/M4); Intel Macs aren't supported yet.
+
+```bash
+# Download from the latest release page (replace v0.6.0 with the tag you want)
+curl -L -o dedupe https://github.com/mickmill54/image-deduper/releases/download/v0.6.0/dedupe-macos-arm64
+chmod +x dedupe
+
+# First-launch Gatekeeper note: macOS may block an unsigned binary the
+# first time. Either right-click → Open in Finder, or clear the quarantine
+# attribute:
+xattr -d com.apple.quarantine ./dedupe
+
+./dedupe --version
+./dedupe info ~/Pictures/some-folder
+
+# (Optional) put it on your PATH so you can call it from anywhere:
+mv dedupe ~/bin/dedupe   # or wherever your PATH dir lives
+```
+
+The binary is ~40 MB. Slower to start up than the venv version (~200 ms
+vs ~50 ms), but doesn't require Python to be installed.
 
 Or if you already have the source:
 
@@ -224,6 +250,7 @@ make lint        # ruff check
 make format      # ruff format + auto-fix
 make typecheck   # static type-check with pyright
 make build       # build wheel + sdist into dist/
+make binary      # build single-file standalone binary at dist/dedupe
 make hooks       # (re)install pre-commit hooks
 make clean       # remove venv, caches, build/coverage artifacts
 ```
