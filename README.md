@@ -58,18 +58,18 @@ section) and `pip install`-ing the local file. Each release ships a
 
 ### macOS standalone binary (no Python required)
 
-Each release also ships **`dedupe-macos-arm64`** — a single-file executable
-that bundles Python + dependencies. Just download, mark it executable, and
-run. Apple Silicon only (M1/M2/M3/M4); Intel Macs aren't supported yet.
+Each release ships **`dedupe-macos-arm64`** — a single-file executable
+that bundles Python + dependencies. Just download, mark it executable,
+and run. Apple Silicon only (M1/M2/M3/M4); Intel Macs aren't supported.
 
 ```bash
-# Download from the latest release page (replace v0.6.0 with the tag you want)
-curl -L -o dedupe https://github.com/mickmill54/image-deduper/releases/download/v0.6.0/dedupe-macos-arm64
+# Always grabs the latest release — no need to update this URL
+curl -L -o dedupe https://github.com/mickmill54/image-deduper/releases/latest/download/dedupe-macos-arm64
 chmod +x dedupe
 
 # First-launch Gatekeeper note: macOS may block an unsigned binary the
-# first time. Either right-click → Open in Finder, or clear the quarantine
-# attribute:
+# first time. Either right-click → Open in Finder, or clear the
+# quarantine attribute:
 xattr -d com.apple.quarantine ./dedupe
 
 ./dedupe --version
@@ -78,6 +78,9 @@ xattr -d com.apple.quarantine ./dedupe
 # (Optional) put it on your PATH so you can call it from anywhere:
 mv dedupe ~/bin/dedupe   # or wherever your PATH dir lives
 ```
+
+To pin a specific version instead, swap `latest` for the tag, e.g.:
+`https://github.com/mickmill54/image-deduper/releases/download/v0.6.0/dedupe-macos-arm64`.
 
 The binary is ~40 MB. Slower to start up than the venv version (~200 ms
 vs ~50 ms), but doesn't require Python to be installed.
