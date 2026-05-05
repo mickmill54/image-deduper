@@ -275,6 +275,35 @@ def test_archive_dry_run_moves_nothing(convert_tree: Path, tmp_path: Path):
     assert (convert_tree / "sub" / "c.jpg").is_file()
 
 
+def test_in_place_via_options_writes_to_source_and_archives(
+    convert_tree: Path, tmp_path: Path
+):
+    """Direct ConvertOptions equivalent of `--in-place`: output_folder == source."""
+    archive = tmp_path / "archive"
+    opts = _opts(
+        convert_tree,
+        convert_tree,  # output IS the source folder
+        target_format="png",
+        source_exts=frozenset({".jpg"}),
+        archive_originals=True,
+        archive_folder=archive,
+    )
+    result = run_convert(opts, QUIET)
+
+    assert result.files_converted == 2
+    assert result.files_archived == 2
+
+    # Converted files are in the source folder
+    assert (convert_tree / "a.png").is_file()
+    assert (convert_tree / "sub" / "c.png").is_file()
+    # Originals moved out
+    assert not (convert_tree / "a.jpg").exists()
+    assert not (convert_tree / "sub" / "c.jpg").exists()
+    # Originals are in the archive
+    assert (archive / "a.jpg").is_file()
+    assert (archive / "sub" / "c.jpg").is_file()
+
+
 def test_archive_refuses_to_overwrite(convert_tree: Path, tmp_path: Path):
     out = tmp_path / "out"
     archive = tmp_path / "archive"

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dedupe"
-version = "0.3.0"
+version = "0.4.0"
 description = "Find and quarantine duplicate image files for slideshow curation"
 readme = "README.md"
 requires-python = ">=3.11"

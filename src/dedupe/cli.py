@@ -208,6 +208,17 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     conv_p.add_argument(
+        "--in-place",
+        action="store_true",
+        help=(
+            "Slideshow-friendly shortcut: write converted files INTO the "
+            "source folder (alongside originals) and move originals to "
+            "<folder>-heic. Equivalent to "
+            "--output-folder <folder> --archive-originals. "
+            "Cannot be combined with --output-folder."
+        ),
+    )
+    conv_p.add_argument(
         "--dry-run",
         action="store_true",
         help="Report what would be converted without writing files",
@@ -447,9 +458,23 @@ def _cmd_convert(args: argparse.Namespace, ui: UI) -> int:
     )
 
     folder: Path = args.folder
-    output_folder: Path = (
-        args.output_folder or folder.parent / f"{folder.name}-converted"
-    )
+
+    # --in-place is a one-flag shortcut that writes converted files into
+    # the source folder and archives originals. It conflicts with an
+    # explicit --output-folder.
+    if args.in_place and args.output_folder is not None:
+        ui.error("--in-place cannot be combined with --output-folder")
+        return EXIT_USAGE
+
+    output_folder: Path
+    if args.in_place:
+        output_folder = folder
+    else:
+        output_folder = (
+            args.output_folder or folder.parent / f"{folder.name}-converted"
+        )
+
+    archive_originals = args.archive_originals or args.in_place
 
     if args.source_ext:
         # Normalize: lowercase, ensure leading dot.
@@ -470,7 +495,7 @@ def _cmd_convert(args: argparse.Namespace, ui: UI) -> int:
         threads=args.threads,
         include_hidden=args.include_hidden,
         follow_symlinks=args.follow_symlinks,
-        archive_originals=args.archive_originals,
+        archive_originals=archive_originals,
         archive_folder=args.archive_folder,
     )
 

@@ -82,6 +82,11 @@ dedupe convert ~/Pictures/naomi-slide-show
 # every move.
 dedupe convert ~/Pictures/naomi-slide-show --archive-originals
 
+# In-place: write JPGs INTO the source folder (alongside originals) and move
+# originals to ~/Pictures/naomi-slide-show-heic/. One flag — best for slideshow
+# software that reads the source folder directly.
+dedupe convert ~/Pictures/naomi-slide-show --in-place
+
 # Convert PNGs to WebP at quality 85, custom output folder
 dedupe convert ~/Pictures/naomi-slide-show \
   --to webp --quality 85 \
@@ -125,6 +130,7 @@ dedupe convert ~/Pictures/naomi-slide-show \
 | `--output-folder <path>` | Output folder (default: `<folder>-converted`) |
 | `--archive-originals` | After each conversion, *move* the original into the archive folder (off by default) |
 | `--archive-folder <path>` | Where to move originals when `--archive-originals` is set (default: `<folder>-heic`) |
+| `--in-place` | Write converted files INTO the source folder and archive originals. Equivalent to `--output-folder <folder> --archive-originals`. Cannot be combined with `--output-folder`. |
 | `--dry-run` | Report only, do not write files |
 | `--recursive` / `--no-recursive` | Recurse into subfolders (default: yes) |
 | `--threads <N>` | Worker threads (default: CPU count) |

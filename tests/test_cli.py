@@ -73,6 +73,49 @@ def test_cli_restore_round_trip(fixture_tree: Path):
     assert (fixture_tree / "archive" / "dup2_copy.png").is_file()
 
 
+def test_cli_convert_in_place_end_to_end(convert_tree: Path):
+    rc = main(
+        [
+            "convert",
+            str(convert_tree),
+            "--in-place",
+            "--to",
+            "png",
+            "--source-ext",
+            "jpg",
+            "--quiet",
+        ]
+    )
+    assert rc == 0
+    # Converted PNGs in the source folder
+    assert (convert_tree / "a.png").is_file()
+    assert (convert_tree / "sub" / "c.png").is_file()
+    # Originals gone from source
+    assert not (convert_tree / "a.jpg").exists()
+    assert not (convert_tree / "sub" / "c.jpg").exists()
+    # Default archive folder created with a manifest
+    archive = convert_tree.parent / f"{convert_tree.name}-heic"
+    assert (archive / "a.jpg").is_file()
+    assert (archive / "archive-manifest.json").is_file()
+
+
+def test_cli_convert_in_place_conflicts_with_output_folder(
+    convert_tree: Path, tmp_path: Path
+):
+    rc = main(
+        [
+            "convert",
+            str(convert_tree),
+            "--in-place",
+            "--output-folder",
+            str(tmp_path / "elsewhere"),
+            "--quiet",
+        ]
+    )
+    # Should refuse with a usage-style exit code
+    assert rc == 2
+
+
 def test_cli_find_similar_report_only(similar_tree: Path, tmp_path: Path):
     report = tmp_path / "r.html"
     rc = main(
