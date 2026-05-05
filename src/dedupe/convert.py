@@ -71,6 +71,7 @@ class ConvertOptions:
     follow_symlinks: bool = False
     archive_originals: bool = False
     archive_folder: Path | None = None
+    exclude_patterns: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -146,6 +147,7 @@ def _scan_options_for(opts: ConvertOptions) -> ScanOptions:
         recursive=opts.recursive,
         include_hidden=opts.include_hidden,
         follow_symlinks=opts.follow_symlinks,
+        exclude_patterns=opts.exclude_patterns,
     )
 
 

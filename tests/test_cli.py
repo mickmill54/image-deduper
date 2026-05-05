@@ -114,6 +114,98 @@ def test_cli_convert_in_place_conflicts_with_output_folder(convert_tree: Path, t
     assert rc == 2
 
 
+def test_cli_convert_from_any_excludes_target_format(convert_tree: Path, tmp_path: Path):
+    """--from-any grabs png/bmp but skips existing JPGs when target is jpeg."""
+    out = tmp_path / "out"
+    rc = main(
+        [
+            "convert",
+            str(convert_tree),
+            "--from-any",
+            "--to",
+            "jpeg",
+            "--output-folder",
+            str(out),
+            "--quiet",
+        ]
+    )
+    assert rc == 0
+    # b.png and sub/d.bmp should convert
+    assert (out / "b.jpg").is_file()
+    assert (out / "sub" / "d.jpg").is_file()
+    # Existing JPGs not re-encoded
+    assert not (out / "a.jpg").exists()
+
+
+def test_cli_convert_from_any_conflicts_with_source_ext(convert_tree: Path):
+    rc = main(
+        [
+            "convert",
+            str(convert_tree),
+            "--from-any",
+            "--source-ext",
+            "png",
+            "--quiet",
+        ]
+    )
+    assert rc == 2  # EXIT_USAGE
+
+
+def test_cli_convert_source_ext_comma_list(convert_tree: Path, tmp_path: Path):
+    """--source-ext png,bmp == --source-ext png --source-ext bmp."""
+    out = tmp_path / "out"
+    rc = main(
+        [
+            "convert",
+            str(convert_tree),
+            "--source-ext",
+            "png,bmp",
+            "--to",
+            "jpeg",
+            "--output-folder",
+            str(out),
+            "--quiet",
+        ]
+    )
+    assert rc == 0
+    assert (out / "b.jpg").is_file()
+    assert (out / "sub" / "d.jpg").is_file()
+
+
+def test_cli_info_human_output(fixture_tree: Path, capsys):
+    rc = main(["info", str(fixture_tree)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Summary" in out
+    assert "By extension" in out
+
+
+def test_cli_info_json_output(fixture_tree: Path, capsys):
+    rc = main(["info", str(fixture_tree), "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["command"] == "info"
+    assert payload["total_files"] >= 7
+    assert ".jpg" in payload["by_extension"]
+
+
+def test_cli_scan_exclude_flag_comma_list(fixture_tree: Path):
+    """--exclude accepts comma-separated patterns just like --source-ext."""
+    rc = main(
+        [
+            "scan",
+            str(fixture_tree),
+            "--exclude",
+            "subdir/*,archive/*",
+            "--quiet",
+        ]
+    )
+    assert rc == 0
+    # Both excluded directories preserved
+    assert (fixture_tree / "subdir" / "dup1_copy.jpg").exists()
+    assert (fixture_tree / "archive" / "dup2_copy.png").exists()
+
+
 def test_cli_find_similar_report_only(similar_tree: Path, tmp_path: Path):
     report = tmp_path / "r.html"
     rc = main(

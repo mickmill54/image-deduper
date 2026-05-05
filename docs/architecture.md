@@ -28,7 +28,8 @@ src/dedupe/
 ├── scan.py             SHA-256 hashing, grouping, move-to-quarantine
 ├── restore.py          manifest replay with conflict detection
 ├── similar.py          perceptual hash, grouping, HTML report
-└── convert.py          image format conversion (originals untouched)
+├── convert.py          image format conversion (originals untouched)
+└── info.py             read-only folder stats / breakdown (no mutation)
 ```
 
 Rules of thumb:

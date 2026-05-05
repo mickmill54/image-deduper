@@ -66,14 +66,35 @@ class Manifest:
 
 
 class ManifestWriter:
-    """Incremental writer. Flushes the full manifest after every entry."""
+    """Incremental writer. Flushes the full manifest after every entry.
 
-    def __init__(self, path: Path, source_folder: Path, dups_folder: Path) -> None:
+    If `resume_from` is provided, the writer is initialized from that
+    pre-existing manifest (preserving its `created_at` and entries) so a
+    crashed-and-resumed scan produces a single contiguous manifest.
+    """
+
+    def __init__(
+        self,
+        path: Path,
+        source_folder: Path,
+        dups_folder: Path,
+        *,
+        resume_from: Manifest | None = None,
+    ) -> None:
         self.path = path
-        self.manifest = Manifest(
-            source_folder=str(source_folder.resolve()),
-            dups_folder=str(dups_folder.resolve()),
-        )
+        if resume_from is not None:
+            self.manifest = Manifest(
+                source_folder=resume_from.source_folder,
+                dups_folder=resume_from.dups_folder,
+                created_at=resume_from.created_at,
+                version=resume_from.version,
+                entries=list(resume_from.entries),
+            )
+        else:
+            self.manifest = Manifest(
+                source_folder=str(source_folder.resolve()),
+                dups_folder=str(dups_folder.resolve()),
+            )
         self._write()
 
     def add(
