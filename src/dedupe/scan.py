@@ -45,6 +45,7 @@ class ScanOptions:
     threads: int = 0  # 0 = default (CPU count, capped)
     include_hidden: bool = False
     follow_symlinks: bool = False
+    exclude_patterns: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -75,6 +76,27 @@ def _is_hidden(path: Path, source: Path) -> bool:
     return any(part.startswith(".") for part in rel.parts)
 
 
+def _matches_exclude(path: Path, source: Path, patterns: tuple[str, ...]) -> bool:
+    """True if `path` matches any glob in `patterns` (relative to source).
+
+    Each pattern is matched twice: once against the relative path
+    (e.g. "exports/img.jpg") and once against the basename (e.g. "img.jpg").
+    Either match excludes the file. Uses fnmatch semantics, which matches
+    most users' intuition for shell-style globs (`*.tmp`, `exports/*`,
+    `**/.DS_Store`).
+    """
+    if not patterns:
+        return False
+    import fnmatch  # noqa: PLC0415 — keep stdlib usage local
+
+    try:
+        rel = str(path.relative_to(source))
+    except ValueError:
+        rel = str(path)
+    name = path.name
+    return any(fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(name, pat) for pat in patterns)
+
+
 def iter_image_files(opts: ScanOptions) -> Iterator[Path]:
     """Yield candidate image paths under opts.source."""
     if not opts.source.exists():
@@ -96,6 +118,8 @@ def iter_image_files(opts: ScanOptions) -> Iterator[Path]:
             if path.suffix.lower() not in IMAGE_EXTENSIONS:
                 continue
             if not opts.include_hidden and _is_hidden(path, opts.source):
+                continue
+            if _matches_exclude(path, opts.source, opts.exclude_patterns):
                 continue
         except OSError as exc:
             logger.warning("skipping %s: %s", path, exc)
@@ -161,7 +185,7 @@ def _move_one(
     shutil.move(str(src), str(dest))
 
 
-def run_scan(opts: ScanOptions, ui: UI) -> ScanResult:
+def run_scan(opts: ScanOptions, ui: UI) -> ScanResult:  # noqa: PLR0912 — orchestrator with linear failure-mode branches
     """Execute a scan. Pure orchestration; per-step work lives in helpers."""
     if not opts.source.exists():
         raise FileNotFoundError(f"source folder does not exist: {opts.source}")
@@ -200,14 +224,54 @@ def run_scan(opts: ScanOptions, ui: UI) -> ScanResult:
             moves=[],
         )
 
-    # Set up manifest unless dry-run.
+    # Set up manifest unless dry-run. If a pre-existing manifest exists in
+    # the dups folder for this same source, resume from it.
     manifest_writer: ManifestWriter | None = None
+    already_archived: set[str] = set()
     if not opts.dry_run:
         opts.dups_folder.mkdir(parents=True, exist_ok=True)
+        manifest_path = opts.dups_folder / MANIFEST_NAME
+
+        resume_from = None
+        if manifest_path.is_file():
+            try:
+                from dedupe.manifest import load as _load_manifest  # noqa: PLC0415
+
+                existing = _load_manifest(manifest_path)
+            except (ValueError, OSError) as exc:
+                ui.warn(
+                    f"existing manifest at {manifest_path} could not be loaded "
+                    f"({exc}); a fresh manifest will be written"
+                )
+            else:
+                if existing.source_folder == str(opts.source.resolve()):
+                    resume_from = existing
+                    already_archived = {e.original_path for e in existing.entries}
+                    ui.warn(
+                        f"resuming from existing manifest with "
+                        f"{len(already_archived)} entry(ies); already-archived "
+                        f"originals will be skipped"
+                    )
+                else:
+                    ui.warn(
+                        f"existing manifest at {manifest_path} is from a "
+                        f"different source folder ({existing.source_folder}); "
+                        f"refusing to mix runs"
+                    )
+                    return ScanResult(
+                        files_scanned=len(files),
+                        duplicate_groups=0,
+                        files_moved=0,
+                        bytes_reclaimed=0,
+                        errors=errors + [f"manifest source mismatch: {manifest_path}"],
+                        moves=[],
+                    )
+
         manifest_writer = ManifestWriter(
-            path=opts.dups_folder / MANIFEST_NAME,
+            path=manifest_path,
             source_folder=opts.source,
             dups_folder=opts.dups_folder,
+            resume_from=resume_from,
         )
 
     moves: list[ManifestEntry] = []
@@ -216,7 +280,10 @@ def run_scan(opts: ScanOptions, ui: UI) -> ScanResult:
 
     for digest, paths in sorted(dup_groups.items()):
         keeper = pick_keeper(paths)
-        losers = [p for p in paths if p != keeper]
+        losers = [p for p in paths if p != keeper and str(p) not in already_archived]
+        if not losers:
+            # Whole group already handled in a prior run.
+            continue
         # Escape the literal '[' before the hash so rich doesn't try to
         # parse the hex string as a style tag (e.g. '[8a740dcc]'). Only
         # the opening bracket needs escaping; ']' on its own is harmless.

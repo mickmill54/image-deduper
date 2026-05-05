@@ -8,6 +8,40 @@ Version bumps follow the conventional-commits convention described in `CLAUDE.md
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/mickmill54/image-deduper/releases/tag/v0.5.0) — 2026-05-05
+
+### Added
+- **`dedupe info <folder>`** — new read-only subcommand that walks a
+  folder and reports total files, image vs non-image counts, hidden
+  files, broken symlinks, total size, and a per-extension breakdown
+  with sizes. Supports `--json` for machine output, `--recursive` /
+  `--no-recursive`, `--exclude-hidden`, `--follow-symlinks`, and
+  `--exclude PATTERN`. Closes #7.
+- **`--exclude PATTERN`** flag on `scan`, `convert`, and `info`.
+  Glob-style; matched against the path relative to the source folder
+  AND the basename, so both `--exclude 'exports/*'` and
+  `--exclude '*.tmp'` work as expected. Repeatable AND accepts
+  comma-separated lists. Closes #5.
+- **`--from-any`** flag on `convert`. Convenience for "convert every
+  readable image format except files already matching the target."
+  Mutually exclusive with `--source-ext` (returns exit 2). Closes #15.
+- **Resumable scan** — if `<dups-folder>/manifest.json` already exists
+  for the same source folder, `dedupe scan` resumes from it: skips
+  files whose `original_path` is already recorded, appends new
+  entries instead of truncating. Refuses to mix runs from a different
+  source folder. Warns the user when resuming. Closes #6.
+- **Comma-list flag syntax** for list-style flags. `--source-ext png,bmp,gif`
+  is now equivalent to `--source-ext png --source-ext bmp --source-ext gif`,
+  and the two forms can be mixed. Same applies to `--exclude`. Closes #16.
+
+### Changed
+- `manifest.py`: `ManifestWriter.__init__` accepts a `resume_from`
+  Manifest to seed the writer from a pre-existing manifest (enables
+  resumable scan).
+- README adds `info` to the command list, documents the new flags
+  per subcommand, and shows usage examples for the new flows.
+- `docs/architecture.md` adds `info.py` to the module map.
+
 ## [0.4.1](https://github.com/mickmill54/image-deduper/releases/tag/v0.4.1) — 2026-05-05
 
 Polish release bundling three quick-win backlog items. No CLI behavior change.

@@ -14,6 +14,9 @@ photo slideshows where **safety and auditability matter more than speed**.
   thumbnails so you can pick the best one yourself.
 - **`dedupe restore <dups-folder>`** — replays the manifest and moves every
   quarantined file back to its original location. Refuses to overwrite.
+- **`dedupe info <folder>`** — print stats about a folder: total files,
+  image vs non-image counts, total size, breakdown by extension, hidden
+  files, broken symlinks. Read-only. Use `--json` for machine output.
 - **`dedupe convert <folder>`** — converts images to a target format
   (default: HEIC/HEIF → JPEG). Converted copies go to a sibling
   `<folder>-converted/` folder. By default originals are *not*
@@ -87,6 +90,16 @@ dedupe convert ~/Pictures/naomi-slide-show --archive-originals
 # software that reads the source folder directly.
 dedupe convert ~/Pictures/naomi-slide-show --in-place
 
+# Convert ANY readable format (PNG, BMP, GIF, TIFF, WebP, HEIC) to JPEG —
+# existing JPGs are skipped automatically.
+dedupe convert ~/Pictures/naomi-slide-show --from-any --to jpeg
+
+# Skip subfolders during scan (glob-style, repeatable, comma-list OK)
+dedupe scan ~/Pictures/naomi-slide-show --exclude 'exports/*,Trash/*'
+
+# Inspect a folder before deciding what to do
+dedupe info ~/Pictures/naomi-slide-show
+
 # Convert PNGs to WebP at quality 85, custom output folder
 dedupe convert ~/Pictures/naomi-slide-show \
   --to webp --quality 85 \
@@ -114,6 +127,16 @@ dedupe convert ~/Pictures/naomi-slide-show \
 | `--threads <N>` | Hash workers (default: CPU count) |
 | `--include-hidden` | Include dotfiles |
 | `--follow-symlinks` | Follow symlinks |
+| `--exclude <pattern>` | Glob to skip (repeatable AND comma-list); matches relative path *and* basename. e.g. `--exclude 'exports/*'` |
+
+### `info`
+| Flag | Description |
+|---|---|
+| `--recursive` / `--no-recursive` | Recurse into subfolders (default: yes) |
+| `--exclude-hidden` | Drop dotfiles from counts (default: included) |
+| `--follow-symlinks` | Follow symlinks (default: skip) |
+| `--exclude <pattern>` | Glob to skip (repeatable AND comma-list) |
+| `--json` | Machine-readable output |
 
 ### `find-similar`
 | Flag | Description |
@@ -126,8 +149,10 @@ dedupe convert ~/Pictures/naomi-slide-show \
 |---|---|
 | `--to <format>` | Target format: `jpeg`, `jpg`, `png`, `webp` (default: `jpeg`) |
 | `--quality <N>` | Encoder quality, 1–100 — JPEG/WebP only (default: 92) |
-| `--source-ext <ext>` | Source extension to include, repeatable (default: `.heic` and `.heif`) |
+| `--source-ext <ext>` | Source extension to include — repeatable AND comma-list (default: `.heic`, `.heif`) |
+| `--from-any` | Convert every readable format except files already matching the target (mutually exclusive with `--source-ext`) |
 | `--output-folder <path>` | Output folder (default: `<folder>-converted`) |
+| `--exclude <pattern>` | Glob to skip (repeatable AND comma-list) |
 | `--archive-originals` | After each conversion, *move* the original into the archive folder (off by default) |
 | `--archive-folder <path>` | Where to move originals when `--archive-originals` is set (default: `<folder>-heic`) |
 | `--in-place` | Write converted files INTO the source folder and archive originals. Equivalent to `--output-folder <folder> --archive-originals`. Cannot be combined with `--output-folder`. |

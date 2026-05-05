@@ -288,6 +288,23 @@ def test_in_place_via_options_writes_to_source_and_archives(convert_tree: Path, 
     assert (archive / "sub" / "c.jpg").is_file()
 
 
+def test_convert_exclude_pattern_skips_subdir(convert_tree: Path, tmp_path: Path):
+    """convert respects --exclude via the same iter_image_files filter as scan."""
+    out = tmp_path / "out"
+    opts = _opts(
+        convert_tree,
+        out,
+        target_format="png",
+        source_exts=frozenset({".jpg"}),
+        exclude_patterns=("sub/*",),
+    )
+    result = run_convert(opts, QUIET)
+    # Only top-level a.jpg converts; sub/c.jpg is excluded.
+    assert result.files_converted == 1
+    assert (out / "a.png").is_file()
+    assert not (out / "sub" / "c.png").exists()
+
+
 def test_archive_refuses_to_overwrite(convert_tree: Path, tmp_path: Path):
     out = tmp_path / "out"
     archive = tmp_path / "archive"

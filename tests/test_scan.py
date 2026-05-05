@@ -158,3 +158,133 @@ def test_run_scan_missing_source_raises(tmp_path: Path):
     bad = tmp_path / "does_not_exist"
     with pytest.raises(FileNotFoundError):
         run_scan(ScanOptions(source=bad, dups_folder=tmp_path / "d"), QUIET)
+
+
+# --- exclude pattern tests --------------------------------------------------
+
+
+def test_exclude_pattern_skips_subdir(fixture_tree: Path):
+    dups = fixture_tree.parent / "dups-excl"
+    opts = ScanOptions(
+        source=fixture_tree,
+        dups_folder=dups,
+        exclude_patterns=("subdir/*",),
+    )
+    result = run_scan(opts, QUIET)
+    # The blue group's subdir/dup1_copy.jpg is excluded; deep/nested/dup1_copy2.jpg
+    # is still a duplicate of dup1.jpg, so we still have a blue group.
+    # Yellow group untouched (in archive/, not subdir/).
+    assert result.duplicate_groups == 2
+    # Confirm subdir was not touched
+    assert (fixture_tree / "subdir" / "dup1_copy.jpg").exists()
+
+
+def test_exclude_pattern_basename_match(fixture_tree: Path):
+    """A bare filename pattern matches by basename anywhere in the tree."""
+    dups = fixture_tree.parent / "dups-basename"
+    opts = ScanOptions(
+        source=fixture_tree,
+        dups_folder=dups,
+        exclude_patterns=("dup1_copy2.jpg",),
+    )
+    result = run_scan(opts, QUIET)
+    # The deep/nested/ duplicate is excluded by basename.
+    assert (fixture_tree / "deep" / "nested" / "dup1_copy2.jpg").exists()
+    # Other duplicates still detected and moved.
+    assert result.files_moved >= 1
+
+
+def test_exclude_pattern_multiple(fixture_tree: Path):
+    dups = fixture_tree.parent / "dups-multi"
+    opts = ScanOptions(
+        source=fixture_tree,
+        dups_folder=dups,
+        exclude_patterns=("subdir/*", "archive/*"),
+    )
+    result = run_scan(opts, QUIET)
+    # Both excluded directories preserved.
+    assert (fixture_tree / "subdir" / "dup1_copy.jpg").exists()
+    assert (fixture_tree / "archive" / "dup2_copy.png").exists()
+    # The blue group still has the deep/ duplicate to move; yellow group has
+    # no duplicate left.
+    assert result.duplicate_groups == 1
+
+
+# --- resumable scan tests ---------------------------------------------------
+
+
+def test_resumable_scan_idempotent_full_rerun(fixture_tree: Path):
+    dups = fixture_tree.parent / "dups-resume"
+    # First run: full scan
+    first = run_scan(ScanOptions(source=fixture_tree, dups_folder=dups), QUIET)
+    assert first.files_moved == 3
+
+    # Second run on the same source/dups folder: nothing more to do
+    second = run_scan(ScanOptions(source=fixture_tree, dups_folder=dups), QUIET)
+    assert second.files_moved == 0
+    assert not second.errors
+
+    # Manifest still contains 3 entries (not duplicated)
+    data = json.loads((dups / "manifest.json").read_text())
+    assert len(data["entries"]) == 3
+
+
+def test_resumable_scan_continues_after_partial_run(fixture_tree: Path):
+    """Hand-craft a partial manifest, verify a second run completes the work."""
+    dups = fixture_tree.parent / "dups-partial"
+    dups.mkdir()
+    # Pretend a prior run already archived the blue subdir/ duplicate.
+    src = fixture_tree / "subdir" / "dup1_copy.jpg"
+    archived = dups / "subdir" / "dup1_copy.jpg"
+    archived.parent.mkdir(parents=True, exist_ok=True)
+    src.rename(archived)
+    partial_manifest = {
+        "version": 1,
+        "created_at": "2026-05-05T00:00:00+00:00",
+        "source_folder": str(fixture_tree.resolve()),
+        "dups_folder": str(dups.resolve()),
+        "entries": [
+            {
+                "original_path": str(src),
+                "new_path": str(archived),
+                "sha256": "0" * 64,
+                "kept_path": str(fixture_tree / "dup1.jpg"),
+                "size_bytes": archived.stat().st_size,
+                "timestamp": "2026-05-05T00:00:00+00:00",
+            }
+        ],
+    }
+    (dups / "manifest.json").write_text(json.dumps(partial_manifest, indent=2))
+
+    result = run_scan(ScanOptions(source=fixture_tree, dups_folder=dups), QUIET)
+    # 2 more files moved (deep/nested + archive/), not 3
+    assert result.files_moved == 2
+
+    # Manifest grew to 3 entries total
+    data = json.loads((dups / "manifest.json").read_text())
+    assert len(data["entries"]) == 3
+    # Pre-existing entry preserved
+    assert any(e["sha256"] == "0" * 64 for e in data["entries"])
+
+
+def test_resume_refuses_when_source_folder_mismatch(fixture_tree: Path, tmp_path: Path):
+    """If the dups manifest says a different source, refuse to mix runs."""
+    dups = fixture_tree.parent / "dups-mismatch"
+    dups.mkdir()
+    bogus_source = tmp_path / "elsewhere"
+    bogus_source.mkdir()
+    (dups / "manifest.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "created_at": "2026-05-05T00:00:00+00:00",
+                "source_folder": str(bogus_source.resolve()),
+                "dups_folder": str(dups.resolve()),
+                "entries": [],
+            }
+        )
+    )
+    result = run_scan(ScanOptions(source=fixture_tree, dups_folder=dups), QUIET)
+    assert any("source mismatch" in e for e in result.errors)
+    # Original source files untouched
+    assert (fixture_tree / "subdir" / "dup1_copy.jpg").exists()

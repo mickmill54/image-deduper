@@ -26,7 +26,36 @@ def _default_threads() -> int:
     return os.cpu_count() or 4
 
 
-def _build_parser() -> argparse.ArgumentParser:
+def _flatten_list_arg(
+    raw: list[str] | None, *, lowercase: bool = False, ensure_dot: bool = False
+) -> list[str]:
+    """Flatten a repeatable list flag that may also use comma-separated values.
+
+    Supports all of these equivalently:
+        --flag a --flag b
+        --flag a,b
+        --flag a,b --flag c
+
+    Tokens are stripped; empty tokens are dropped. Returns [] if raw is None.
+    `lowercase` and `ensure_dot` control extension-style normalization.
+    """
+    if not raw:
+        return []
+    out: list[str] = []
+    for entry in raw:
+        for token in entry.split(","):
+            t = token.strip()
+            if not t:
+                continue
+            if lowercase:
+                t = t.lower()
+            if ensure_dot and not t.startswith("."):
+                t = f".{t}"
+            out.append(t)
+    return out
+
+
+def _build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 — flat subparser config is the readable shape
     parser = argparse.ArgumentParser(
         prog="dedupe",
         description="Find and quarantine duplicate image files.",
@@ -101,6 +130,16 @@ def _build_parser() -> argparse.ArgumentParser:
         "--follow-symlinks",
         action="store_true",
         help="Follow symlinks (default: skip)",
+    )
+    scan_p.add_argument(
+        "--exclude",
+        action="append",
+        metavar="PATTERN",
+        help=(
+            "Glob pattern to exclude (repeatable; comma-separated lists "
+            "also accepted). Matched against the path relative to <folder> "
+            "AND the basename. e.g. --exclude 'exports/*' --exclude '*.tmp'"
+        ),
     )
     scan_p.set_defaults(func=_cmd_scan)
 
@@ -177,8 +216,17 @@ def _build_parser() -> argparse.ArgumentParser:
         action="append",
         metavar="EXT",
         help=(
-            "Source extension to include (repeatable, leading dot optional). "
-            "Default: .heic and .heif"
+            "Source extension to include. Repeatable AND comma-separated "
+            "lists accepted (leading dot optional). Default: .heic and .heif. "
+            "Examples: --source-ext png,bmp,gif  /  --source-ext png --source-ext bmp"
+        ),
+    )
+    conv_p.add_argument(
+        "--from-any",
+        action="store_true",
+        help=(
+            "Convert every readable image format EXCEPT files that already "
+            "match the target format. Mutually exclusive with --source-ext."
         ),
     )
     conv_p.add_argument(
@@ -254,7 +302,69 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Follow symlinks (default: skip)",
     )
+    conv_p.add_argument(
+        "--exclude",
+        action="append",
+        metavar="PATTERN",
+        help=(
+            "Glob pattern to exclude (repeatable; comma-separated lists "
+            "also accepted). Matched against the path relative to <folder> "
+            "AND the basename."
+        ),
+    )
     conv_p.set_defaults(func=_cmd_convert)
+
+    # info
+    info_p = sub.add_parser(
+        "info",
+        help="Print folder stats: file count by extension, total size, etc.",
+        description=(
+            "Walk a folder (read-only) and print stats: total files, "
+            "image vs non-image counts, total size, breakdown by "
+            "extension, hidden files, broken symlinks. Use --json for "
+            "machine output."
+        ),
+    )
+    _add_global_flags(info_p)
+    info_p.add_argument("folder", type=Path, help="Folder to inspect")
+    info_recurse = info_p.add_mutually_exclusive_group()
+    info_recurse.add_argument(
+        "--recursive",
+        "-r",
+        dest="recursive",
+        action="store_true",
+        default=True,
+        help="Recurse into subdirectories (default)",
+    )
+    info_recurse.add_argument(
+        "--no-recursive",
+        dest="recursive",
+        action="store_false",
+        help="Do not recurse into subdirectories",
+    )
+    info_p.add_argument(
+        "--exclude-hidden",
+        dest="include_hidden",
+        action="store_false",
+        default=True,
+        help="Exclude dotfiles from counts (default: included)",
+    )
+    info_p.add_argument(
+        "--follow-symlinks",
+        action="store_true",
+        help="Follow symlinks (default: skip)",
+    )
+    info_p.add_argument(
+        "--exclude",
+        action="append",
+        metavar="PATTERN",
+        help=(
+            "Glob pattern to exclude (repeatable; comma-separated lists "
+            "also accepted). Matched against the path relative to <folder> "
+            "AND the basename."
+        ),
+    )
+    info_p.set_defaults(func=_cmd_info)
 
     return parser
 
@@ -328,6 +438,7 @@ def _cmd_scan(args: argparse.Namespace, ui: UI) -> int:
         threads=args.threads,
         include_hidden=args.include_hidden,
         follow_symlinks=args.follow_symlinks,
+        exclude_patterns=tuple(_flatten_list_arg(args.exclude)),
     )
 
     try:
@@ -448,7 +559,7 @@ def _cmd_restore(args: argparse.Namespace, ui: UI) -> int:
     return EXIT_PARTIAL if result.errors or result.conflicts else EXIT_OK
 
 
-def _cmd_convert(args: argparse.Namespace, ui: UI) -> int:
+def _cmd_convert(args: argparse.Namespace, ui: UI) -> int:  # noqa: PLR0912 — option-build branches are intentionally linear
     # Lazy import: keeps Pillow out of the import path of the other commands.
     from dedupe.convert import (  # noqa: PLC0415
         DEFAULT_SOURCE_EXTS,
@@ -473,11 +584,23 @@ def _cmd_convert(args: argparse.Namespace, ui: UI) -> int:
 
     archive_originals = args.archive_originals or args.in_place
 
-    if args.source_ext:
-        # Normalize: lowercase, ensure leading dot.
-        source_exts = frozenset(
-            (e if e.startswith(".") else f".{e}").lower() for e in args.source_ext
+    # --from-any conflicts with --source-ext (ambiguous intent).
+    if args.from_any and args.source_ext:
+        ui.error("--from-any cannot be combined with --source-ext")
+        return EXIT_USAGE
+
+    if args.from_any:
+        # Lazy import: Pillow is loaded only when convert actually runs.
+        from dedupe.scan import IMAGE_EXTENSIONS  # noqa: PLC0415
+
+        target_aliases = (
+            {".jpg", ".jpeg"}
+            if args.target_format in {"jpeg", "jpg"}
+            else {f".{args.target_format}"}
         )
+        source_exts = frozenset(IMAGE_EXTENSIONS - target_aliases)
+    elif args.source_ext:
+        source_exts = frozenset(_flatten_list_arg(args.source_ext, lowercase=True, ensure_dot=True))
     else:
         source_exts = DEFAULT_SOURCE_EXTS
 
@@ -494,6 +617,7 @@ def _cmd_convert(args: argparse.Namespace, ui: UI) -> int:
         follow_symlinks=args.follow_symlinks,
         archive_originals=archive_originals,
         archive_folder=args.archive_folder,
+        exclude_patterns=tuple(_flatten_list_arg(args.exclude)),
     )
 
     try:
@@ -542,6 +666,72 @@ def _cmd_convert(args: argparse.Namespace, ui: UI) -> int:
             ui.info(f"  files {archive_verb}: {result.files_archived}")
         if result.files_converted and not opts.dry_run:
             ui.success(f"  output: {opts.output_folder}")
+        if result.errors:
+            ui.warn(f"completed with {len(result.errors)} error(s)")
+
+    return EXIT_PARTIAL if result.errors else EXIT_OK
+
+
+def _cmd_info(args: argparse.Namespace, ui: UI) -> int:
+    from dedupe.info import InfoOptions, run_info  # noqa: PLC0415
+
+    opts = InfoOptions(
+        source=args.folder,
+        recursive=args.recursive,
+        include_hidden=args.include_hidden,
+        follow_symlinks=args.follow_symlinks,
+        exclude_patterns=tuple(_flatten_list_arg(args.exclude)),
+    )
+
+    try:
+        result = run_info(opts, ui)
+    except (FileNotFoundError, NotADirectoryError) as exc:
+        ui.error(str(exc))
+        return EXIT_ERROR
+
+    if ui.config.json_mode:
+        ui.emit_json(
+            {
+                "command": "info",
+                "source": str(result.source),
+                "total_files": result.total_files,
+                "image_files": result.image_files,
+                "non_image_files": result.non_image_files,
+                "hidden_files": result.hidden_files,
+                "broken_symlinks": result.broken_symlinks,
+                "total_size_bytes": result.total_size_bytes,
+                "image_size_bytes": result.image_size_bytes,
+                "by_extension": result.by_extension,
+                "size_by_extension": result.size_by_extension,
+                "errors": result.errors,
+            }
+        )
+    else:
+        ui.info("")
+        ui.info("[bold]Summary[/bold]")
+        ui.info(f"  total files:     {result.total_files}")
+        ui.info(f"  image files:     {result.image_files}")
+        ui.info(f"  non-image files: {result.non_image_files}")
+        ui.info(f"  hidden files:    {result.hidden_files}")
+        if result.broken_symlinks:
+            ui.warn(f"  broken symlinks: {result.broken_symlinks}")
+        ui.info(
+            f"  total size:      {result.total_size_bytes} "
+            f"({_format_bytes(result.total_size_bytes)})"
+        )
+        ui.info(
+            f"  image size:      {result.image_size_bytes} "
+            f"({_format_bytes(result.image_size_bytes)})"
+        )
+
+        if result.by_extension:
+            ui.info("")
+            ui.info("[bold]By extension[/bold] (count · size)")
+            # Sort by count desc, then ext asc.
+            for ext, count in sorted(result.by_extension.items(), key=lambda kv: (-kv[1], kv[0])):
+                size = result.size_by_extension.get(ext, 0)
+                ui.info(f"  {ext:<10} {count:>6}   {_format_bytes(size)}")
+
         if result.errors:
             ui.warn(f"completed with {len(result.errors)} error(s)")
 
