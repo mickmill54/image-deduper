@@ -27,18 +27,24 @@ src/dedupe/
 ├── manifest.py         JSON manifest read/write (atomic incremental writes)
 ├── scan.py             SHA-256 hashing, grouping, move-to-quarantine
 ├── restore.py          manifest replay with conflict detection
-└── similar.py          perceptual hash, grouping, HTML report
+├── similar.py          perceptual hash, grouping, HTML report
+└── convert.py          image format conversion (originals untouched)
 ```
 
 Rules of thumb:
 
 - Only `ui.py` writes to stdout/stderr. Every other module takes a `UI`
   instance and routes through it.
-- Only `similar.py` imports Pillow / imagehash / pillow-heif.
-- `scan.py`, `restore.py`, `similar.py` each expose a single `run_*` entry
-  point. CLI handlers in `cli.py` build the options dataclass and call it.
-- Filesystem mutation is confined to `_move_one()` in `scan.py` and the
-  `shutil.move(...)` call in `restore.py`. There are no `unlink`, `rmtree`,
+- `similar.py` and `convert.py` are the modules that import Pillow /
+  imagehash / pillow-heif. `cli.py` defers their imports lazily so
+  `dedupe scan` doesn't load the imaging stack.
+- `scan.py`, `restore.py`, `similar.py`, and `convert.py` each expose a
+  single `run_*` entry point. CLI handlers in `cli.py` build the options
+  dataclass and call it.
+- Filesystem mutation is confined to `_move_one()` in `scan.py`, the
+  `shutil.move(...)` call in `restore.py`, and the `Image.save(...)` call
+  in `convert.py` (writing to a *new* output file only). There are no
+  `unlink`, `rmtree`,
   or `os.remove` calls anywhere. This is enforced by code review, not by a
   linter — if you find yourself reaching for one, stop and check
   `CLAUDE.md` "Safety Invariants."
@@ -126,6 +132,34 @@ _write_html_report()       self-contained HTML; thumbnails as base64 data URIs
 file-mutation calls anywhere in `similar.py`. A test
 (`test_find_similar_does_not_move_files`) asserts the source folder is
 unchanged after the run.
+
+## Data flow — `dedupe convert <folder>`
+
+```
+folder
+  │
+  ▼
+iter_image_files()         (same eligibility rules as scan)
+  │
+  ▼
+filter by source_exts      default: {.heic, .heif}; overridable via --source-ext
+  │  list[Path]
+  ▼
+plan output paths          mirror layout into <folder>-converted/, swap extension
+  │  list[(src, dest)]
+  ▼
+ThreadPoolExecutor         _convert_one() per pair: open → convert → save
+  │  raises FileExistsError if dest already exists (refuse to overwrite)
+  ▼
+ConvertResult              files_scanned, files_converted, files_skipped,
+                           bytes_written, errors, conversions
+```
+
+`convert` never modifies the source folder. The only filesystem mutation
+is `Image.save(dest, ...)` writing to a fresh output path. This is
+enforced by `test_convert_jpg_to_png_mirrors_layout` (asserts originals
+still exist) and `test_refuses_to_overwrite` (asserts a pre-existing
+output is untouched).
 
 ## Class diagram
 

@@ -14,6 +14,10 @@ photo slideshows where **safety and auditability matter more than speed**.
   thumbnails so you can pick the best one yourself.
 - **`dedupe restore <dups-folder>`** — replays the manifest and moves every
   quarantined file back to its original location. Refuses to overwrite.
+- **`dedupe convert <folder>`** — converts images to a target format
+  (default: HEIC/HEIF → JPEG). Originals are never modified; converted
+  copies are written to a sibling `<folder>-converted/` folder mirroring
+  the original layout.
 
 ## Duplicate definition
 
@@ -66,6 +70,15 @@ dedupe find-similar ~/Pictures/naomi-slide-show --threshold 3
 
 # Restore everything from the manifest
 dedupe restore ~/Pictures/naomi-slide-show-dups
+
+# Convert HEIC/HEIF to JPEG (output: ~/Pictures/naomi-slide-show-converted)
+dedupe convert ~/Pictures/naomi-slide-show
+
+# Convert PNGs to WebP at quality 85, custom output folder
+dedupe convert ~/Pictures/naomi-slide-show \
+  --to webp --quality 85 \
+  --source-ext png \
+  --output-folder ~/Pictures/webp-out
 ```
 
 ## Flags
@@ -94,6 +107,19 @@ dedupe restore ~/Pictures/naomi-slide-show-dups
 |---|---|
 | `--threshold <N>` | pHash Hamming distance threshold (default 5) |
 | `--report <path>` | HTML output path (default `similar-report.html`) |
+
+### `convert`
+| Flag | Description |
+|---|---|
+| `--to <format>` | Target format: `jpeg`, `jpg`, `png`, `webp` (default: `jpeg`) |
+| `--quality <N>` | Encoder quality, 1–100 — JPEG/WebP only (default: 92) |
+| `--source-ext <ext>` | Source extension to include, repeatable (default: `.heic` and `.heif`) |
+| `--output-folder <path>` | Output folder (default: `<folder>-converted`) |
+| `--dry-run` | Report only, do not write files |
+| `--recursive` / `--no-recursive` | Recurse into subfolders (default: yes) |
+| `--threads <N>` | Worker threads (default: CPU count) |
+| `--include-hidden` | Include dotfiles |
+| `--follow-symlinks` | Follow symlinks |
 
 ## Manifest / restore workflow
 
@@ -144,6 +170,20 @@ make lint     # ruff check
 make format   # ruff format + auto-fix
 make clean    # remove venv and caches
 ```
+
+The Makefile also exposes the CLI as named targets, so you don't have to
+remember the flag layout:
+
+```bash
+make dedupe FOLDER=~/Desktop/naomi-slide-show
+make dedupe FOLDER=~/Desktop/naomi-slide-show ARGS=--dry-run
+make heic-convert FOLDER=~/Desktop/naomi-slide-show
+make convert FOLDER=~/Pictures/foo TO=webp QUALITY=85
+```
+
+Pass extra `dedupe` flags through `ARGS=...`. `make heic-convert` is
+hard-coded to `--to jpeg` (the slideshow-friendly default); `make
+convert` honors `TO=...` for any of `jpeg`, `png`, or `webp`.
 
 ## License
 

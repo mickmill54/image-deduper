@@ -8,6 +8,33 @@ Version bumps follow the conventional-commits convention described in `CLAUDE.md
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/mickmill54/image-deduper/releases/tag/v0.2.0) — 2026-05-05
+
+### Added
+- **`dedupe convert <folder>`** — new subcommand for converting images to
+  a different format. Default behavior: walks the folder for `.heic` /
+  `.heif` files and writes JPEG copies into a sibling
+  `<folder>-converted/` folder, mirroring the source layout. Originals
+  are never modified; refuses to overwrite existing outputs.
+- `convert` flags: `--to {jpeg,jpg,png,webp}` (default: `jpeg`),
+  `--quality N`, `--source-ext` (repeatable, defaults to `.heic`/`.heif`),
+  `--output-folder PATH`, `--dry-run`, `--recursive/--no-recursive`,
+  `--threads N`, `--include-hidden`, `--follow-symlinks`.
+- 11 new tests in `tests/test_convert.py` covering layout mirroring,
+  overwrite refusal, dry-run, hidden-file handling, JPEG output
+  validity, and a HEIC → JPEG round trip (skipped if the local
+  pillow-heif build lacks the encoder).
+- New Makefile targets: `make dedupe FOLDER=...`, `make heic-convert
+  FOLDER=...` (hard-coded to JPEG output), and `make convert
+  FOLDER=... TO=... QUALITY=...` for the general case. All accept
+  extra CLI flags via `ARGS=...`.
+
+### Changed
+- README adds a `convert` flag table, end-to-end usage examples, and a
+  Makefile-targets section under "Development".
+- `docs/architecture.md` now documents `convert.py` in the module map
+  and adds a data-flow section for `dedupe convert`.
+
 ## [0.1.1](https://github.com/mickmill54/image-deduper/releases/tag/v0.1.1) — 2026-05-05
 
 ### Added
