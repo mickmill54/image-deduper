@@ -61,6 +61,55 @@ This is a CLI, not a service, so only the relevant factors apply:
   calls in library code. The `ui` module is the only place that writes to
   stdout/stderr; it respects `--quiet`, `--json`, `--no-color`, and `NO_COLOR`.
 
+## Tooling
+
+The dev loop is driven by `make`. Each of these must pass before a PR
+can land — CI gates merges with the same checks:
+
+| Command | What it runs |
+|---|---|
+| `make lint` | `ruff check src tests` |
+| `make format` | `ruff format` + `ruff check --fix` |
+| `make typecheck` | `pyright` (basic mode, py3.11 target) |
+| `make test` | `pytest -v` |
+| `make coverage` | pytest with HTML report at `htmlcov/` |
+| `make build` | `python -m build` → `dist/*.whl` + `dist/*.tar.gz` |
+
+Pre-commit hooks installed by `make setup` run `ruff check --fix` and
+`ruff format` on every commit, plus a few standard hygiene hooks.
+Bypass once with `git commit --no-verify`.
+
+**Type-checking expectation:** the codebase passes pyright cleanly with
+0 errors. New code should keep that property. If you hit a third-party
+typing gap, prefer narrow `# type: ignore[<rule>]` comments with a
+short reason over loosening the global config.
+
+## Release process
+
+Each `vX.Y.Z` tag pushed to `origin` triggers a CI release job that
+builds the wheel + sdist and attaches them to the matching GitHub
+release page. The job creates the release with auto-generated notes if
+one doesn't yet exist, otherwise uploads to the manually-created
+release. Standard flow:
+
+1. Land code via PR (CI gates the merge).
+2. Bump `__version__` (`src/dedupe/__init__.py`) and
+   `version` (`pyproject.toml`) in the same PR or a follow-up.
+3. Add a `[X.Y.Z]` section to `CHANGELOG.md` with a date and a link
+   to the release page.
+4. After merge, on `main`: `git tag -a vX.Y.Z -m "..."` →
+   `git push origin vX.Y.Z`.
+5. Create the release with custom notes:
+   `gh release create vX.Y.Z --title "..." --notes "..."`.
+6. The `release` job in CI (gated on `refs/tags/v*`) runs and uploads
+   `dist/*.whl` + `dist/*.tar.gz` to the release page.
+
+Conventional-commits decide the bump:
+- `feat:` → minor (new behavior)
+- `fix:` → patch
+- `docs:` / `chore:` / `ci:` → patch (or no bump for pure docs)
+- `feat!:` / `BREAKING CHANGE:` → major
+
 ## SOLID Principles
 
 All Python code follows SOLID:
