@@ -35,32 +35,20 @@ should make by eye, not by hash.
 
 ## Install
 
-From a fresh clone (most common, gets the dev environment too):
+### Homebrew (recommended for macOS users)
 
 ```bash
-git clone git@github.com:mickmill54/image-deduper.git
-cd image-deduper
-make setup
-source .venv/bin/activate
+brew install mickmill54/tap/dedupe
 dedupe --help
 ```
 
-Or, install a specific tagged release without cloning the dev tree (useful on
-a second machine or in a script). Either via pip + git tag:
+Apple Silicon only (M1/M2/M3/M4); Intel Macs aren't supported. To upgrade
+later: `brew upgrade dedupe`. The formula lives at
+[`mickmill54/homebrew-tap`](https://github.com/mickmill54/homebrew-tap).
 
-```bash
-pip install git+https://github.com/mickmill54/image-deduper.git@v0.6.0
-```
+### macOS binary, manually (no Homebrew, no Python)
 
-…or by downloading the wheel from a GitHub release page (under the "Assets"
-section) and `pip install`-ing the local file. Each release ships a
-`dedupe-X.Y.Z-py3-none-any.whl` and an sdist tarball.
-
-### macOS standalone binary (no Python required)
-
-Each release ships **`dedupe-macos-arm64`** — a single-file executable
-that bundles Python + dependencies. Just download, mark it executable,
-and run. Apple Silicon only (M1/M2/M3/M4); Intel Macs aren't supported.
+Same binary that the brew formula installs, but downloaded by hand:
 
 ```bash
 # Always grabs the latest release — no need to update this URL
@@ -85,9 +73,22 @@ To pin a specific version instead, swap `latest` for the tag, e.g.:
 The binary is ~40 MB. Slower to start up than the venv version (~200 ms
 vs ~50 ms), but doesn't require Python to be installed.
 
-Or if you already have the source:
+### Python wheel (pip)
+
+If you already have a Python environment and prefer pip:
 
 ```bash
+pip install git+https://github.com/mickmill54/image-deduper.git@v0.6.0
+```
+
+…or download `dedupe-X.Y.Z-py3-none-any.whl` from a release page and
+`pip install` the local file. Each release ships a wheel + sdist.
+
+### From source (developing on this repo)
+
+```bash
+git clone git@github.com:mickmill54/image-deduper.git
+cd image-deduper
 make setup
 source .venv/bin/activate
 dedupe --help
