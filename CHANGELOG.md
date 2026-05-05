@@ -8,6 +8,22 @@ Version bumps follow the conventional-commits convention described in `CLAUDE.md
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/mickmill54/image-deduper/releases/tag/v0.4.0) — 2026-05-05
+
+### Added
+- **`dedupe convert --in-place`** — slideshow-friendly shortcut that
+  writes converted files INTO the source folder (alongside originals)
+  and moves the originals to the archive folder (`<folder>-heic` by
+  default). Equivalent to `--output-folder <folder> --archive-originals`,
+  but as a single flag for the common HEIC-curation flow. Cannot be
+  combined with `--output-folder` (returns exit code 2).
+- 3 new tests: end-to-end CLI in-place flow, in-place + output-folder
+  conflict, and a unit-level test that exercises the same shape via
+  `ConvertOptions` directly. Closes #12.
+
+### Changed
+- README convert flag table and usage examples updated.
+
 ## [0.3.0](https://github.com/mickmill54/image-deduper/releases/tag/v0.3.0) — 2026-05-05
 
 ### Added
