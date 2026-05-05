@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
     branches: [main]
 
@@ -38,5 +39,44 @@ jobs:
       - name: Ruff lint
         run: ruff check src tests
 
+      - name: Pyright type-check
+        run: pyright
+
       - name: Pytest
         run: pytest -q
+
+  release:
+    name: Build + attach wheel and sdist to GitHub release
+    needs: test
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write  # needed to upload assets to the release
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Build wheel + sdist
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: Upload artifacts to GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # If a release for this tag already exists (created manually with
+          # custom notes), upload artifacts to it. Otherwise create one with
+          # auto-generated notes so the workflow is self-sufficient.
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" dist/*.whl dist/*.tar.gz --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" dist/*.whl dist/*.tar.gz \
+              --generate-notes \
+              --title "${GITHUB_REF_NAME}"
+          fi

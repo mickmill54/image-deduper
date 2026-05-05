@@ -21,6 +21,7 @@ from rich.progress import (
     MofNCompleteColumn,
     Progress,
     SpinnerColumn,
+    TaskID,
     TextColumn,
     TimeRemainingColumn,
 )
@@ -128,7 +129,7 @@ class _NullProgress(_ProgressHandle):
 
 
 class _RichProgress(_ProgressHandle):
-    def __init__(self, progress: Progress, task_id: int) -> None:
+    def __init__(self, progress: Progress, task_id: TaskID) -> None:
         self._progress = progress
         self._task_id = task_id
 

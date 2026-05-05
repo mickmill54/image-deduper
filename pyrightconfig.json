@@ -1,0 +1,19 @@
+{
+  "include": ["src", "tests"],
+  "exclude": [
+    ".venv",
+    "build",
+    "dist",
+    "**/__pycache__",
+    "**/.pytest_cache",
+    "**/.ruff_cache",
+    "**/htmlcov"
+  ],
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "basic",
+  "reportMissingTypeStubs": "none",
+  "reportUnusedImport": "warning",
+  "reportUnusedVariable": "warning"
+}
