@@ -134,6 +134,35 @@ file-mutation calls anywhere in `similar.py`. A test
 (`test_find_similar_does_not_move_files`) asserts the source folder is
 unchanged after the run.
 
+## Data flow — `dedupe info <folder>`
+
+```
+folder
+  │
+  ▼
+walk source                opts.source.rglob('*') if recursive else iterdir()
+  │
+  ▼
+filter                     symlink rule, hidden rule, _matches_exclude(),
+                           classify image vs non-image by IMAGE_EXTENSIONS
+  │  list[Path] + per-file ext / size
+  ▼
+tally                      Counters keyed by extension; running totals for
+                           total_files / image_files / non_image_files /
+                           hidden_files / broken_symlinks / total_size_bytes /
+                           image_size_bytes
+  │
+  ▼
+InfoResult                 prints a Summary + per-extension table to the UI;
+                           emits a structured payload when --json is set
+```
+
+`info` is **structurally read-only**: never opens a write handle, never
+moves or deletes anything. Reuses `_is_hidden` and `_matches_exclude`
+from `scan.py` so the eligibility filter behaves identically across
+commands. Counts non-image files too (which `iter_image_files` would
+skip), so it doubles as a "what's actually in this folder?" tool.
+
 ## Data flow — `dedupe convert <folder>`
 
 ```
@@ -187,9 +216,10 @@ These guarantees are covered by:
 ## Class diagram
 
 The codebase is mostly functions plus small frozen dataclasses (option
-records, result records, manifest entries). The only class with
-non-trivial behavior is `UI` (and its progress-handle helpers); the
-`ManifestWriter` is a thin wrapper around append-and-flush.
+records, result records, manifest entries). The classes with non-trivial
+behavior are `UI` (plus its progress-handle helpers), `ManifestWriter`
+(append-and-flush for the dups manifest), and `_ArchiveManifestWriter`
+(thread-safe append-and-flush for `convert --archive-originals`).
 
 ```
 ┌──────────────────────────┐         ┌──────────────────────────┐
@@ -217,24 +247,35 @@ non-trivial behavior is `UI` (and its progress-handle helpers); the
 │  │ run_scan(opts, ui) │──────────────▶│ ManifestWriter         │
 │  └────────────────────┘           │   │ + add(...)             │
 │  ┌────────────────────┐           │   │ - _write() (atomic)    │
-│  │ run_restore(...)   │──┐        │   └────────────────────────┘
-│  └────────────────────┘  │        │
+│  │ run_restore(...)   │──┐        │   │ ⤺ resume_from?         │
+│  └────────────────────┘  │        │   └────────────────────────┘
 │  ┌────────────────────┐  │ reads  │
-│  │ run_find_similar(…)│  │        │
-│  └────────────────────┘  │        │   ┌────────────────────────┐
-│                          └────────────│ manifest.load(path)    │
-│   command handlers in cli.py      │   └────────────────────────┘
-└───────────────────────────────────┘
+│  │ run_find_similar(…)│  │        │   ┌────────────────────────┐
+│  └────────────────────┘  │        │   │ manifest.load(path)    │
+│  ┌────────────────────┐  │        │   └────────────────────────┘
+│  │ run_convert(...)   │──────────────▶┌────────────────────────┐
+│  └────────────────────┘  │        │   │ _ArchiveManifestWriter │
+│  ┌────────────────────┐  │        │   │ + add(...) (locked)    │
+│  │ run_info(...)      │  │        │   │ - _write() (atomic)    │
+│  └────────────────────┘  │        │   └────────────────────────┘
+│                          └────────────                          │
+│   command handlers in cli.py                                    │
+└─────────────────────────────────────────────────────────────────┘
 
   Options & results (all @dataclass(frozen=True) unless noted):
 
     ScanOptions          ScanResult              SimilarOptions
     RestoreOptions       RestoreResult           SimilarResult
     SimilarGroup
+    ConvertOptions       ConvertResult           ArchiveEntry
+    InfoOptions          InfoResult (mutable; counters built up in place)
 ```
 
 The arrow conventions: solid arrows are "uses / calls"; the `aggregates`
-arrow on the right shows that a `Manifest` holds a list of `ManifestEntry`.
+arrow on the right shows that a `Manifest` holds a list of
+`ManifestEntry`. `⤺ resume_from?` on `ManifestWriter` denotes the
+optional resumable-scan parameter (preserves `created_at` and existing
+entries when reopening a partial run).
 
 ## Why argparse instead of Click / Typer?
 
@@ -264,6 +305,47 @@ the `MANIFEST_VERSION` constant.
 The on-disk format is pretty-printed JSON — bigger on disk, but trivially
 inspectable from a shell when something goes wrong, which matters more
 than file size for a manifest that grows linearly with duplicates moved.
+
+## CI and release pipeline
+
+`.github/workflows/ci.yml` defines two jobs:
+
+- **`test`** — runs on every push to `main`, every PR to `main`, and
+  every `v*` tag push. Matrix across Python 3.11/3.12/3.13. Steps:
+  install package + dev deps, `ruff check`, `pyright`, `pytest -q`.
+  Branch protection on `main` requires all three matrix jobs to pass
+  before a PR can merge.
+
+- **`release`** — gated with
+  `if: startsWith(github.ref, 'refs/tags/v')`, so it only fires on
+  tag pushes. `needs: test`, so a tag won't ship a wheel unless the
+  matrix is green. Steps: checkout, set up Python 3.13,
+  `python -m build`, then upload `dist/*.whl` and `dist/*.tar.gz` to
+  the GitHub release matching the tag.
+
+The upload step is self-healing: if a release already exists for the
+tag (the standard flow — `gh release create ... --notes "..."` first
+to get rich notes), it uploads with `--clobber`. Otherwise it creates
+the release with `--generate-notes` so the workflow always succeeds.
+
+**Why this shape:**
+- Pure Python wheel (`py3-none-any`) — built once, works on any
+  platform with Python ≥ 3.11. No native compilation, no platform
+  matrix.
+- Tag-driven, not branch-driven, so merging to `main` doesn't
+  accidentally publish.
+- Test-gated, so a broken tag never ships an installable artifact.
+- Idempotent on the upload side, so re-running the workflow on the
+  same tag (e.g. after a CI infra hiccup) is safe.
+
+To install a tagged release without cloning:
+
+```bash
+pip install git+https://github.com/mickmill54/image-deduper.git@vX.Y.Z
+```
+
+…or download the wheel from the release page and `pip install` it
+directly.
 
 ## Testing strategy
 
