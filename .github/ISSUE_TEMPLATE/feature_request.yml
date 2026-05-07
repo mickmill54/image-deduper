@@ -1,0 +1,70 @@
+name: Feature request
+description: Suggest a new flag, subcommand, or behavior
+title: "feat: <short description>"
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for proposing a feature! For non-trivial changes, design
+        discussion happens here on the issue *before* code is written.
+        Saves wasted PR work.
+
+        Before filing, please confirm:
+        - [ ] You've searched existing issues to see if it's already
+              proposed (open or closed).
+        - [ ] Your proposed feature is consistent with the project's
+              [safety invariants](https://github.com/mickmill54/image-deduper/blob/main/CLAUDE.md#safety-invariants-project-specific)
+              (never delete files, refuse to overwrite, manifest is
+              source of truth).
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: Describe the situation today, what's painful, and what you'd want to be able to do instead. Lead with the use case, not the proposed solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_solution
+    attributes:
+      label: Proposed shape
+      description: A rough sketch — flag name, subcommand name, semantics. Doesn't have to be final; the design conversation can refine it.
+      placeholder: |
+        e.g. `dedupe scan <folder> --since DATE` skips files modified before DATE.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Existing workarounds, other shapes you thought about and rejected, similar features in other tools.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Which subcommand(s) does this affect?
+      multiple: true
+      options:
+        - scan
+        - find-similar
+        - restore
+        - convert
+        - info
+        - new top-level subcommand
+        - global flag
+        - other / cross-cutting
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Other notes
+      description: Anything else worth flagging — backwards-compat concerns, performance implications, related issues.
+    validations:
+      required: false

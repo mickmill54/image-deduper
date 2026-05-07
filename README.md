@@ -1,5 +1,12 @@
 # dedupe
 
+> [!IMPORTANT]
+> **Platform support: macOS Apple Silicon only** (M1 / M2 / M3 / M4).
+> Intel Macs, Linux, and Windows are not supported. The published macOS
+> binary requires Apple Silicon; the Python wheel only installs on
+> Python ≥ 3.11. If you'd like a build for another platform, please
+> [open a feature request](https://github.com/mickmill54/image-deduper/issues/new?template=feature_request.yml).
+
 Find and quarantine duplicate image files from a directory. Built for curating
 photo slideshows where **safety and auditability matter more than speed**.
 
