@@ -135,8 +135,9 @@ is the *what*; the body is the *why*. Reference issues and PRs by number
 
 Open an issue with the **Bug report** template. The form will ask for:
 
-- Your macOS version and chip (Apple Silicon required; M1 vs M4
-  doesn't usually matter but the chip family helps reproduce)
+- Your macOS version and which Apple Silicon chip you have
+  (the specific chip generation rarely matters for reproduction,
+  but it helps narrow things down)
 - The `dedupe --version` you're running
 - The exact command you ran
 - Expected vs actual behavior

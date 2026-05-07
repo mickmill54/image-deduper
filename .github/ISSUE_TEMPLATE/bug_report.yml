@@ -36,9 +36,9 @@ body:
   - type: input
     id: macos_version
     attributes:
-      label: macOS version and chip
-      description: From "About This Mac". Apple Silicon only.
-      placeholder: macOS 14.6 (Sonoma), Apple M2 Pro
+      label: macOS version and Apple Silicon chip
+      description: From "About This Mac". Apple Silicon only — copy the line that starts with "Chip".
+      placeholder: macOS 14.6 (Sonoma), Apple Silicon (paste the exact chip name from About This Mac)
     validations:
       required: true
 
