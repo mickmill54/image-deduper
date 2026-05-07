@@ -1,0 +1,88 @@
+name: Bug report
+description: Something isn't working as documented
+title: "bug: <short description>"
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. The fields below help
+        reproduce the issue quickly. If a field doesn't apply, write `n/a`.
+
+        Before filing, please confirm:
+        - [ ] You're on macOS Apple Silicon (the only supported platform).
+        - [ ] You've checked `dedupe --version` matches the latest release at
+              https://github.com/mickmill54/image-deduper/releases.
+        - [ ] You've searched existing issues for a duplicate.
+
+  - type: input
+    id: dedupe_version
+    attributes:
+      label: dedupe version
+      description: Output of `dedupe --version`.
+      placeholder: dedupe 0.6.1
+    validations:
+      required: true
+
+  - type: input
+    id: install_method
+    attributes:
+      label: How you installed dedupe
+      description: brew / wheel / source / standalone binary
+      placeholder: brew install mickmill54/tap/dedupe
+    validations:
+      required: true
+
+  - type: input
+    id: macos_version
+    attributes:
+      label: macOS version and chip
+      description: From "About This Mac". Apple Silicon only.
+      placeholder: macOS 14.6 (Sonoma), Apple M2 Pro
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Exact command you ran
+      description: Including all flags. Use a synthetic folder if your real path is sensitive.
+      render: shell
+      placeholder: |
+        dedupe scan ~/Pictures/test --dry-run --no-color
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What you thought the command would do.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What it did instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Full output / error message
+      description: Paste the complete output. Use `--verbose` for more detail. Use a synthetic folder so paths in the output are not sensitive.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Smallest reproduction
+      description: A minimal folder structure (e.g. created with `mkdir` + `touch` or a Pillow snippet) that triggers the bug. Optional but very helpful.
+      render: shell
+    validations:
+      required: false

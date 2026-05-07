@@ -1,0 +1,12 @@
+# Disable blank issues so contributors use the structured templates.
+# Anyone who really needs a free-form thread can still open one via the
+# Discussions tab (if enabled) or ask on an existing related issue.
+blank_issues_enabled: false
+
+contact_links:
+  - name: Read the docs first
+    url: https://github.com/mickmill54/image-deduper#dedupe
+    about: Many "is this a bug?" questions are answered in the README and docs/architecture.md.
+  - name: Contributing guide
+    url: https://github.com/mickmill54/image-deduper/blob/main/CONTRIBUTING.md
+    about: Conventions for branches, commits, PRs, and the local dev loop.
