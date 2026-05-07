@@ -8,6 +8,26 @@ Version bumps follow the conventional-commits convention described in `CLAUDE.md
 
 ## [Unreleased]
 
+## [0.6.1](https://github.com/mickmill54/image-deduper/releases/tag/v0.6.1) — 2026-05-05
+
+Docs-only release. No code or behavior change.
+
+### Changed
+- `docs/architecture.md` gains a new **"Algorithm: how `dedupe scan`
+  scales"** section after the Threading model. Covers the four-phase
+  pipeline with rationale (why threads for hashing, why single-threaded
+  for moves), why SHA-256 vs pairwise byte comparison, why a
+  cryptographic hash specifically, memory and time profiles at 50K
+  photos, the determinism + resumability properties as algorithmic
+  consequences, and which tunables move the needle on big runs.
+- Three new mermaid diagrams in that section:
+  - **Hash-bucket grouping** — many-to-one file→hash→group
+    visualization that ASCII can't render cleanly
+  - **Resumable-scan decision tree** — when does a re-run resume vs
+    refuse vs start fresh
+  - **Manifest atomicity state diagram** — `_write()` lifecycle,
+    showing why a crash mid-write never corrupts the manifest
+
 ## [0.6.0](https://github.com/mickmill54/image-deduper/releases/tag/v0.6.0) — 2026-05-05
 
 ### Added

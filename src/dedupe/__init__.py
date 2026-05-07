@@ -1,3 +1,3 @@
 """dedupe — find and quarantine duplicate image files."""
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"

@@ -295,6 +295,205 @@ trade-off is verbosity in subparser setup, which is contained in
   `pillow-heif` registration in each worker, which is annoying to get
   right. Not worth the complexity until profiling says so.
 
+## Algorithm: how `dedupe scan` scales
+
+The high-level pipeline is the ASCII data-flow at the top of this doc.
+This section is the *why* — what design choices the algorithm rests on,
+how it scales as you point it at bigger trees, and what properties you
+get for free.
+
+### The four phases, with rationale
+
+```
+1. Discover  →  2. Hash  →  3. Group  →  4. Move
+   (1 thread)    (N threads)  (cheap)     (1 thread)
+```
+
+**1. Discover (single-threaded, fast).** `Path.rglob('*')` walks the tree
+under the source folder. Each entry is run through the eligibility
+filter (extension, hidden, symlink, exclude pattern). What's left is a
+sorted candidate list. This is metadata-only, so even 50,000 files in a
+deep tree finish in a few seconds.
+
+**2. Hash (parallelized, the bottleneck).** Each candidate is
+stream-hashed in 1 MiB chunks (`HASH_CHUNK_SIZE = 1 << 20`) into
+SHA-256. The whole file is *never* loaded into memory, so a 50 MB RAW
+behaves the same as a 200 KB thumbnail. Threads work here because the
+GIL is released during `read()` syscalls — while one thread is waiting
+on disk, another runs.
+
+**3. Group (cheap).** Filter the `digest → list[Path]` dict to
+entries with `len(paths) > 1`. Sort by digest for deterministic
+output. O(n) over the dict.
+
+**4. Move (single-threaded, sequential).** For each duplicate group:
+pick the keeper (`min(paths, key=lambda p: (len(str(p)), str(p)))`),
+mirror each loser's path under the dups folder, refuse to overwrite,
+`shutil.move()`, append to the manifest, atomic flush. Single-threaded
+because manifest writes need ordering and `rename(2)` is already
+millisecond-fast on the same filesystem.
+
+### Why SHA-256, not pairwise byte comparison
+
+For 10,000 photos, **pairwise comparison would be ~50,000,000 pairs**.
+Each pair could require reading both files from disk to find the first
+differing byte. Worst case: O(n² · filesize) reads.
+
+Hashing flips it: each file is read **exactly once**, end to end. After
+hashing, identifying duplicates is a hash-table lookup — effectively
+free. Total cost: O(n · filesize) reads + O(n) memory.
+
+```mermaid
+graph LR
+  subgraph Files
+    A[a.jpg]
+    B[b.jpg]
+    C[d/b.jpg]
+    D[c.jpg]
+    E[e/c.jpg]
+    F[f/c.jpg]
+  end
+
+  subgraph "Hash dict"
+    H1[0fd0fbc0…]
+    H2[abc12345…]
+    H3[def45678…]
+  end
+
+  subgraph Groups
+    U[unique<br/>discarded]
+    G2[group of 2]
+    G3[group of 3]
+  end
+
+  A --> H1 --> U
+  B --> H2
+  C --> H2
+  H2 --> G2
+  D --> H3
+  E --> H3
+  F --> H3
+  H3 --> G3
+```
+
+### Why a *cryptographic* hash specifically
+
+SHA-256's collision probability is ~1 in 2¹²⁸ for any two random
+inputs. You'd need more files than there are atoms in the observable
+universe before a false-positive collision became likely.
+
+Faster non-cryptographic hashes (xxhash, MD5) would speed up the
+hashing phase slightly, but:
+
+- **MD5 has known engineered collisions.** A malicious actor could
+  craft files that "look like" duplicates. Not a real concern for
+  personal photos, but the reason crypto hashes are the safer default.
+- **Hashing isn't the bottleneck — disk I/O is.** SHA-256 on a 5 MB
+  JPEG is ~10 ms; reading the same file from a fast SSD is ~50 ms.
+  Faster hash, same wall clock.
+
+### Memory profile
+
+| Item | Per-file cost | At 50,000 photos |
+|---|---|---|
+| Path string in candidate list | ~80 bytes | ~4 MB |
+| Hash dict entry (path + 64-char hex digest + overhead) | ~150 bytes | ~7 MB |
+| Manifest entries (5 path-ish strings + size + timestamp) | ~300 bytes | ~15 MB *if all were duplicates* |
+
+Memory scales linearly and stays trivial. Even a 100K-photo run barely
+registers. The bottleneck is disk I/O, not RAM.
+
+### Time profile
+
+For a typical photo set on a fast NVMe SSD:
+
+| Phase | Throughput | At 50,000 photos |
+|---|---|---|
+| Discover (`rglob` + filter) | ~100K paths/sec | ~0.5 s |
+| Hash (8 threads, ~5 MB avg JPEG) | ~500–1000 files/sec | 50–100 s |
+| Group | hash-table operations | <0.01 s |
+| Move (rename + manifest flush) | ~500 ops/sec | depends on dup count |
+
+Hashing dominates. On a network mount (NAS), per-file latency goes up
+10–100×, and **threaded reads help much more there** than on a local
+SSD because most threads are blocked on round trips at any moment.
+
+### Two properties you get for free
+
+**Deterministic.** Same input → same output. Re-running on the same
+folder twice produces the same duplicate groups (hashing is
+deterministic), the same keeper for each group (shortest-path rule is
+deterministic), and the same manifest entries in the same order
+(groups are iterated in sorted-digest order).
+
+**Resumable.** If `<dups>/manifest.json` already exists for the same
+source folder, `run_scan` loads it, builds a `set[str]` of
+`original_path`s already archived, and skips them in the move phase. A
+Ctrl-C'd 50K-file scan picks up exactly where it left off.
+
+```mermaid
+flowchart TB
+  Start([dedupe scan FOLDER]) --> Q1{manifest.json<br/>in dups folder?}
+  Q1 -- no --> Fresh[Fresh ManifestWriter<br/>hash and process all files]
+  Q1 -- yes --> Q2{manifest.source_folder<br/>matches FOLDER?}
+  Q2 -- no --> Refuse[Refuse: source mismatch<br/>error, no moves, exit 3]
+  Q2 -- yes --> Resume[Resume: load entries<br/>skip already-archived originals<br/>append new entries]
+  Fresh --> Move[Move losers and<br/>flush manifest after each]
+  Resume --> Move
+  Move --> End([ScanResult])
+```
+
+### Manifest atomicity
+
+The manifest is the source of truth for `restore`. Every entry is
+flushed before the next move starts, so a crash mid-run leaves a
+manifest that points at the moves that *did* happen — never a
+half-written entry.
+
+```mermaid
+stateDiagram-v2
+  [*] --> Empty: ManifestWriter()
+  Empty --> Flushed: _write() initial
+  Flushed --> WritingTmp: add(entry)
+  WritingTmp --> Flushed: tmp.replace(path)
+  Flushed --> [*]: scan completes
+
+  note right of WritingTmp
+    Atomic: write to tmp file,
+    then rename to manifest.json.
+    Crash here: old manifest survives.
+  end note
+```
+
+`_write()` writes to `<path>.tmp` and then `tmp.replace(path)`. POSIX
+`rename(2)` is atomic on the same filesystem, so concurrent readers
+never see a partially-written manifest.
+
+### Where the algorithm could break down
+
+Failure modes only relevant at scales we don't currently target:
+
+- **`rglob` itself slows on enormous trees** (10M+ files) because it
+  stats every entry. Fix: parallel walk; not Python-easy. Not your
+  case.
+- **Path strings dominate memory** at 10M+ files. The hash dict + path
+  list could push past 1 GB. Not your case.
+- **Hash dict lookups slow** when the dict outgrows L3 cache (~30 MB
+  at typical sizes). For 100K entries we're well inside.
+
+For a slideshow-prep workload (a few thousand to a few tens of
+thousands of files), runtime is **completely dominated by how fast
+your disk can read all the photos once**. Everything else is noise.
+
+### Tunables and their relative impact
+
+- **`--threads N`** — defaults to CPU count. On NVMe, more threads
+  beyond ~8 help less; on a NAS, going to 16–32 can be a big win.
+- **`--exclude PATTERN`** — biggest performance lever. Skipping a
+  30K-file `screenshots/` folder cuts the run proportionally.
+- **`--no-recursive`** — limits to the top-level. Useful if you only
+  want to dedup the immediate folder.
+
 ## Manifest format and forward compatibility
 
 `manifest.json` carries an explicit `"version": 1` field. `manifest.load`
