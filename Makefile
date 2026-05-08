@@ -4,7 +4,7 @@ VENV := .venv
 PY := $(VENV)/bin/python
 PIP := $(VENV)/bin/pip
 
-.PHONY: help setup test coverage lint format typecheck build binary run clean dedupe heic-convert convert hooks
+.PHONY: help setup test coverage lint format typecheck build binary audit audit-fast run clean dedupe heic-convert convert hooks
 
 # Most action targets accept a FOLDER variable. Override per-call:
 #   make heic-convert FOLDER=~/Desktop/naomi-slide-show
@@ -61,6 +61,12 @@ build: ## Build wheel + sdist into dist/
 	@echo ""
 	@echo "Artifacts in dist/:"
 	@ls -1 dist/
+
+audit: ## Full code-quality audit: lint, types, tests+coverage, security, CVEs, complexity, dead code
+	@bash scripts/audit.sh
+
+audit-fast: ## Local subset of audit: skip pre-commit drift check + CVE scan (~5s)
+	@bash scripts/audit.sh --fast
 
 binary: ## Build single-file standalone binary at dist/dedupe (PyInstaller)
 	$(VENV)/bin/pyinstaller \

@@ -1,0 +1,55 @@
+name: Audit
+
+on:
+  schedule:
+    # Nightly at 09:00 UTC (~02:00 PT). Picks up overnight CVE advisories
+    # in pip-audit and gives a fresh signal at the start of the working day.
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+    # Allow manual runs via `gh workflow run audit.yml`. Useful right
+    # before / after a big PR to compare baselines.
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Code-quality audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            requirements.txt
+
+      - name: Install package + dev deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Install pre-commit hooks (so the drift check can run)
+        run: pre-commit install --install-hooks
+
+      - name: Run audit suite
+        # Capture both stdout and stderr; tee to a file we'll upload as
+        # an artifact even if a hard gate fails.
+        run: |
+          set +e
+          bash scripts/audit.sh 2>&1 | tee audit-report.txt
+          # Preserve the script's exit code (set +e turned off auto-fail)
+          exit "${PIPESTATUS[0]}"
+
+      - name: Upload audit report
+        if: always()  # upload even when the audit fails
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-report
+          path: audit-report.txt
+          retention-days: 30

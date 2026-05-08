@@ -40,6 +40,19 @@ make typecheck   # pyright in basic mode
 make test        # pytest -v
 ```
 
+Before opening a PR, an extra sanity check via the audit suite is a
+good idea:
+
+```bash
+make audit-fast  # ~5s — lint + types + tests + coverage + safety check + complexity + dead code
+make audit       # ~60s — same plus CVE scan + pre-commit drift check (full suite, also runs nightly in CI)
+```
+
+`make audit-fast` skips the network-bound CVE scan and the pre-commit
+drift check, so it's quick enough to run before every PR. The full
+`make audit` runs nightly on `main` via the `Audit` GitHub Actions
+workflow and uploads its report as an artifact.
+
 Other useful targets:
 
 ```bash

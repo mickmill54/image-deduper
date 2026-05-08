@@ -315,6 +315,8 @@ make coverage    # pytest + coverage HTML report at htmlcov/index.html
 make lint        # ruff check
 make format      # ruff format + auto-fix
 make typecheck   # static type-check with pyright
+make audit       # full code-quality audit: lint + types + tests + coverage + security + CVEs + complexity + dead code (~60s, hits network)
+make audit-fast  # local subset: skip pre-commit drift check + CVE scan (~5s)
 make build       # build wheel + sdist into dist/
 make binary      # build single-file standalone binary at dist/dedupe
 make hooks       # (re)install pre-commit hooks
