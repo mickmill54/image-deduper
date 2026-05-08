@@ -8,6 +8,62 @@ Version bumps follow the conventional-commits convention described in `CLAUDE.md
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/mickmill54/image-deduper/releases/tag/v0.9.0) — 2026-05-08
+
+`dedupe sweep` learns two new modes for relocating user content out of
+slideshow folders. Closes #31 and #32.
+
+### Added
+
+- **`dedupe sweep --videos`** — move video files (`.mov`, `.mp4`,
+  `.m4v`, `.avi`, `.mkv`, `.wmv`, `.flv`, `.webm`, `.mpg`, `.mpeg`,
+  `.3gp`) to a sibling folder. Default destination: `<folder> - MOV`
+  (matches the existing manual convention many users have for
+  separating videos from a photo slideshow). Override with
+  `--videos-folder PATH`. Always moves; never deletes (these are user
+  content). Closes #32.
+- **`dedupe sweep --non-images`** — move arbitrary non-image files
+  (`.txt`, `.pdf`, `.docx`, `.zip`, `.mp3`, etc.) to a sibling folder.
+  Default destination: `<folder>-non-images`. Override with
+  `--non-images-folder PATH`. Always moves; never deletes. Closes #31.
+- **Combinable modes.** A single `dedupe sweep <folder> --junk
+  --non-images --videos` walks the source once and dispatches each
+  file to the right category. Each category writes its own manifest
+  in its own destination, so restores are independent.
+- New constant `VIDEO_EXTENSIONS` in `sweep.py` (companion to
+  `IMAGE_EXTENSIONS` and `JUNK_FILES`).
+
+### Changed
+
+- `run_sweep` is now multi-category: walks once, classifies each file
+  (junk / video / non-image / image / other), routes to the right
+  category's destination + manifest. The single-category implementation
+  from v0.7.0 was a special case of this shape.
+- `SweepResult` gains per-category counters (`junk_swept`,
+  `non_images_swept`, `videos_swept`) alongside the aggregate
+  `files_swept`. JSON output exposes them too.
+- The summary block now lists per-category destinations when multiple
+  categories ran in one invocation.
+
+### Notes
+
+- Image files are never touched by `sweep`, regardless of which modes
+  are enabled — that's `scan`'s job.
+- **Live Photos pairing is out of scope for v1.** A Live Photo is a
+  JPG + a paired MOV with the same basename; running
+  `--videos` on a folder of Live Photos splits the pairs. If
+  preserving the pairing matters, file an enhancement issue.
+- The "never delete files" invariant continues to hold for everything
+  except `--junk` (auto-regenerated OS metadata, narrowly scoped). The
+  audit's `check_no_destructive_calls.sh` continues to pass — the only
+  `Path.unlink()` in `src/dedupe/` lives in `sweep.py`'s junk-deletion
+  code path.
+
+### Stats
+
+113 tests pass (was 96; +17 new across `tests/test_sweep.py` and
+`tests/test_cli.py`). Lint, pyright, audit hard gates: clean.
+
 ## [0.8.0](https://github.com/mickmill54/image-deduper/releases/tag/v0.8.0) — 2026-05-07
 
 DRY refactor + code-quality audit suite. **No CLI behavior change** —

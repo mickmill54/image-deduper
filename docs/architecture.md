@@ -193,62 +193,87 @@ from `scan.py` so the eligibility filter behaves identically across
 commands. Counts non-image files too (which `iter_image_files` would
 skip), so it doubles as a "what's actually in this folder?" tool.
 
-## Data flow — `dedupe sweep <folder> --junk`
+## Data flow — `dedupe sweep <folder>`
+
+`sweep` is the multi-category cleanup subcommand. Three modes
+(combinable in one invocation):
+
+| Mode | Default action | Default destination |
+|---|---|---|
+| `--junk` | delete + log | `<folder>-sweep-log/sweep-manifest.json` (audit only) |
+| `--junk --quarantine-junk` | move to mirrored quarantine | `<folder>-junk/` |
+| `--non-images` | move (always) | `<folder>-non-images/` |
+| `--videos` | move (always) | `<folder> - MOV/` (matches manual convention) |
 
 ```
 folder
   │
   ▼
-walk source                 opts.source.rglob('*') if recursive else iterdir()
-                            (does NOT apply hidden-file filter — `.DS_Store`
-                            is hidden BY NAME and is what we're looking for)
+walk_files (include_hidden=True)   junk files like .DS_Store are hidden by name;
+                                   default hidden-skip filter would miss them
   │
   ▼
-filter                      symlink rule, regular-file check, _matches_exclude()
-  │  list[Path]
-  ▼
-narrow by JUNK_FILES        keep only files whose basename is in the allowlist
-                            {Thumbs.db, .DS_Store, desktop.ini, .AppleDouble}
-  │  list[Path]
-  ▼
-mode-dispatch               --quarantine-junk?
-  │                            ├─ no (default)  → delete + log
-  │                            └─ yes           → move to mirrored quarantine
-  ▼
-for each junk file:
-  if quarantine_junk:
-    mirror destination      <source>/foo/Thumbs.db → <quarantine>/foo/Thumbs.db
-    refuse to overwrite     existing dest? error and continue
-    shutil.move(...)
-    SweepEntry(action=moved, new_path=...)
-  else:
-    path.unlink()           the deliberate exception to "never delete"
-    SweepEntry(action=deleted, new_path=None)
-  manifest_writer.add(entry)  atomic per-entry flush
+classify each file:
+  basename in JUNK_FILES         → category=junk
+  ext in VIDEO_EXTENSIONS        → category=videos
+  ext in IMAGE_EXTENSIONS        → SKIP (sweep never touches images)
+  else                           → category=non-images
   │
   ▼
-SweepResult                 files_scanned, files_swept, bytes_swept,
-                            errors, entries
+filter to enabled categories     only categories whose flag is set get processed
+  │  bucket: dict[category, list[Path]]
+  ▼
+build per-category plan:
+  for each non-empty bucket:
+    pick destination (junk-delete uses log_folder; others use quarantine_folder)
+    pick action (delete only for junk-delete; move otherwise)
+    open AtomicManifestWriter[SweepEntry] in destination
+  │
+  ▼
+for each plan, for each file:
+  if action=delete:  path.unlink() (only path in tool that calls unlink())
+  if action=move:    mirror layout into destination, refuse overwrite,
+                     shutil.move()
+  manifest.add(entry)              atomic per-entry flush
+  result.{junk|non_images|videos}_swept += 1
+  │
+  ▼
+SweepResult           files_scanned, files_swept (aggregate), per-category counters,
+                      bytes_swept, errors, entries
 ```
+
+### Safety: the deliberate-exception rule
 
 `sweep --junk` is the **first and only** place in the tool where deletion
 is the default action. The exception is narrowly scoped:
 
 - **Hardcoded allowlist.** `JUNK_FILES = {Thumbs.db, .DS_Store, desktop.ini, .AppleDouble}`. Adding entries requires a PR with justification.
 - **Opt-in.** `dedupe sweep <folder>` with no flags is a no-op — the user must explicitly pass `--junk`.
-- **Logged.** Every deletion is recorded in `<folder>-sweep-log/sweep-manifest.json` with the original path, size, and timestamp. SHA-256 is omitted for deletion entries (the bytes are gone; hash is moot).
-- **Override available.** `--quarantine-junk` flips back to the safer "move to mirrored quarantine" pattern that everything else in the tool uses.
+- **Logged.** Every deletion is recorded in `<folder>-sweep-log/sweep-manifest.json` with the original path, size, and timestamp.
+- **Override available.** `--quarantine-junk` flips back to move-to-mirrored-quarantine.
 
-For #31 (non-image user content) and #32 (videos), the default will remain `move to quarantine, never delete` — those handle real user files, not OS-managed metadata.
+`--non-images` and `--videos` always move (never delete) — they handle
+arbitrary user content, where the regular "never delete" invariant
+applies. The audit's `check_no_destructive_calls.sh` enforces this in
+CI: the only `Path.unlink()` call in `src/dedupe/` is in `sweep.py`'s
+junk-deletion path; if anyone introduces a destructive call elsewhere
+(or in another sweep mode), the audit fails.
 
-### Why a separate walker
+### Why one walk for multiple modes
 
-`sweep` reuses `_matches_exclude` from `scan.py` but does **not** call
-`iter_image_files` because that walker pre-filters out hidden files
-(`.DS_Store` starts with `.`) and non-image extensions. Both filters
-would skip exactly the files `sweep --junk` is trying to find. The
-sweep walker is its own short function (`_iter_candidate_files`) that
-applies only the symlink, regular-file, and exclude-pattern filters.
+The classifier (`_classify(path)`) returns the category each file
+belongs to (or `None` for images). One walk over the source tree
+produces a single classification per file; the dispatch into per-category
+buckets lets us run all three modes in a single invocation without
+re-walking. Each enabled category gets its own destination and its own
+manifest, so a restore of one category is independent of the others.
+
+### Why we don't call `iter_image_files`
+
+`scan.iter_image_files` filters out hidden files and non-image
+extensions — exactly the files `sweep` needs to find. Sweep instead
+calls `walk.walk_files` directly with `include_hidden=True` and no
+predicate, then narrows via `_classify()` per file.
 
 ## Data flow — `dedupe convert <folder>`
 

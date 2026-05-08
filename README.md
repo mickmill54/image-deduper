@@ -24,13 +24,21 @@ photo slideshows where **safety and auditability matter more than speed**.
 - **`dedupe info <folder>`** — print stats about a folder: total files,
   image vs non-image counts, total size, breakdown by extension, hidden
   files, broken symlinks. Read-only. Use `--json` for machine output.
-- **`dedupe sweep <folder> --junk`** — *delete* well-known
-  auto-generated OS metadata files (`Thumbs.db`, `.DS_Store`,
-  `desktop.ini`, `.AppleDouble`) that clutter image folders. Logs every
-  deletion to a sweep manifest for audit. Pass `--quarantine-junk` for
-  the safer "move to a sibling folder, don't delete" behavior. This is
-  the only place in the tool where deletion is the default — see the
-  Safety section below for why.
+- **`dedupe sweep <folder>`** — clean non-photo content out of a
+  slideshow folder. Three combinable modes:
+  - `--junk` deletes (with audit log) well-known auto-generated OS
+    metadata files (`Thumbs.db`, `.DS_Store`, `desktop.ini`,
+    `.AppleDouble`). Pass `--quarantine-junk` to move instead.
+  - `--non-images` *moves* arbitrary user files that aren't images
+    (`.txt`, `.pdf`, `.docx`, `.zip`, `.mp3`, etc.) to
+    `<folder>-non-images/`. Always moves; never deletes.
+  - `--videos` *moves* video files (`.mov`, `.mp4`, `.m4v`, `.avi`,
+    `.mkv`, etc.) to `<folder> - MOV/` (matches the manual convention
+    for separating videos from a photo slideshow). Useful when your
+    slideshow software can't display videos.
+
+  Combine all three to fully prep a folder for slideshow consumption.
+  Image files are never touched — that's `scan`'s job.
 - **`dedupe convert <folder>`** — converts images to a target format
   (default: HEIC/HEIF → JPEG). Converted copies go to a sibling
   `<folder>-converted/` folder. By default originals are *not*
@@ -164,6 +172,19 @@ dedupe sweep ~/Pictures/naomi-slide-show --junk
 # Or move junk to a quarantine folder instead of deleting
 dedupe sweep ~/Pictures/naomi-slide-show --junk --quarantine-junk
 
+# Move videos out (slideshow software often can't play .mov / .mp4)
+# Default destination: '~/Pictures/naomi-slide-show - MOV'
+dedupe sweep ~/Pictures/naomi-slide-show --videos
+
+# Move arbitrary non-image files (txt, pdf, docx, etc.) out
+# Default destination: '~/Pictures/naomi-slide-show-non-images'
+dedupe sweep ~/Pictures/naomi-slide-show --non-images
+
+# Full slideshow-prep: clean junk + extract videos + extract non-images,
+# all in one run
+dedupe sweep ~/Pictures/naomi-slide-show --junk --videos --non-images --dry-run
+dedupe sweep ~/Pictures/naomi-slide-show --junk --videos --non-images
+
 # Convert PNGs to WebP at quality 85, custom output folder
 dedupe convert ~/Pictures/naomi-slide-show \
   --to webp --quality 85 \
@@ -232,7 +253,11 @@ dedupe convert ~/Pictures/naomi-slide-show \
 | `--junk` | Sweep auto-generated OS metadata files (`Thumbs.db`, `.DS_Store`, `desktop.ini`, `.AppleDouble`). Default action: **delete + log** |
 | `--quarantine-junk` | Instead of deleting, *move* junk files to `<folder>-junk/` mirroring layout |
 | `--junk-folder <path>` | Override quarantine destination (default: `<folder>-junk`) |
-| `--log-folder <path>` | Override sweep-log location in delete mode (default: `<folder>-sweep-log`) |
+| `--log-folder <path>` | Override sweep-log location in junk-delete mode (default: `<folder>-sweep-log`) |
+| `--non-images` | Move arbitrary non-image files (.txt, .pdf, .docx, etc.) to a sibling folder. Always moves; never deletes |
+| `--non-images-folder <path>` | Override destination for non-images (default: `<folder>-non-images`) |
+| `--videos` | Move video files (.mov, .mp4, .m4v, .avi, .mkv, etc.) to a sibling folder. Always moves; never deletes |
+| `--videos-folder <path>` | Override destination for videos (default: `<folder> - MOV`) |
 | `--dry-run` | Report only, no changes |
 | `--recursive` / `--no-recursive` | Recurse into subfolders (default: yes) |
 | `--follow-symlinks` | Follow symlinks |
@@ -259,12 +284,12 @@ the one narrow, deliberate exception, and only because:
    move-to-quarantine, matching how every other mutation in the tool
    works.
 
-For arbitrary user content (non-image files like `.txt`/`.docx`, video
-files), the default is and will remain **move-to-quarantine, never
-delete** — see the [non-image][] and [video][] feature requests.
-
-[non-image]: https://github.com/mickmill54/image-deduper/issues/31
-[video]: https://github.com/mickmill54/image-deduper/issues/32
+**Other sweep modes never delete.** `--non-images` and `--videos` are
+real user content, so they only ever *move* to a sibling folder, with
+their own per-category manifests for restore. `Path.unlink()` only
+appears in `sweep.py`'s junk-deletion code path; the project-specific
+audit check (`scripts/check_no_destructive_calls.sh`) hard-gates the
+build to keep that property.
 
 ## Manifest / restore workflow
 
