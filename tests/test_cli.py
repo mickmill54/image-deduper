@@ -73,6 +73,62 @@ def test_cli_restore_round_trip(fixture_tree: Path):
     assert (fixture_tree / "archive" / "dup2_copy.png").is_file()
 
 
+def test_cli_restore_sweep_videos_round_trip(tmp_path: Path):
+    """End-to-end via the CLI: sweep --videos then restore the videos
+    folder reverses every move (#42)."""
+    src = tmp_path / "Photos"
+    src.mkdir()
+    (src / "trip.mov").write_bytes(b"v")
+    (src / "photo.jpg").write_bytes(b"\xff\xd8")
+    (src / "2024").mkdir()
+    (src / "2024" / "ski.mp4").write_bytes(b"v")
+
+    assert main(["sweep", str(src), "--videos", "--quiet"]) == 0
+    videos_folder = src.parent / f"{src.name} - videos"
+    assert (videos_folder / "trip.mov").is_file()
+
+    assert main(["restore", str(videos_folder), "--quiet"]) == 0
+    # Videos back at original paths
+    assert (src / "trip.mov").is_file()
+    assert (src / "2024" / "ski.mp4").is_file()
+    # Image untouched throughout
+    assert (src / "photo.jpg").is_file()
+
+
+def test_cli_restore_sweep_junk_log_reports_no_errors(tmp_path: Path):
+    """Restore on a junk-delete audit log exits cleanly and reports
+    the deletes as one-way (not as errors)."""
+    src = tmp_path / "Photos"
+    src.mkdir()
+    (src / "Thumbs.db").write_text("cache")
+
+    assert main(["sweep", str(src), "--junk", "--quiet"]) == 0
+    log_folder = src.parent / f"{src.name}-sweep-log"
+
+    # JSON mode lets us assert the structured output.
+    rc = main(["restore", str(log_folder), "--json"])
+    assert rc == 0
+
+
+def test_cli_restore_json_output_includes_manifest_kind(tmp_path: Path, capsys):
+    """JSON output declares the manifest type so callers know which
+    code path executed."""
+    src = tmp_path / "Photos"
+    src.mkdir()
+    (src / "trip.mov").write_bytes(b"v")
+
+    assert main(["sweep", str(src), "--videos", "--quiet"]) == 0
+    capsys.readouterr()  # drain sweep output
+    videos_folder = src.parent / f"{src.name} - videos"
+
+    rc = main(["restore", str(videos_folder), "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["command"] == "restore"
+    assert payload["manifest_kind"] == "sweep"
+    assert payload["files_restored"] == 1
+
+
 def test_cli_convert_in_place_end_to_end(convert_tree: Path):
     rc = main(
         [
