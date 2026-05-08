@@ -189,8 +189,15 @@ def _emit_summary(result, opts, ui: UI) -> None:
 def _cmd_sweep(args: argparse.Namespace, ui: UI) -> int:
     from dedupe.sweep import SweepOptions, run_sweep  # noqa: PLC0415
 
+    # Resolve to absolute so `dedupe sweep .` lands destinations as
+    # siblings of the source rather than inside it (see #43). Path(".")
+    # has `.parent == Path(".")` and `.name == ""`, which collapses
+    # `src.parent / f"{src.name} - videos"` into a relative path that
+    # ends up inside the source folder.
+    folder: Path = args.folder.resolve()
+
     opts = SweepOptions(
-        source=args.folder,
+        source=folder,
         sweep_junk=args.sweep_junk,
         quarantine_junk=args.quarantine_junk,
         junk_folder=args.junk_folder,

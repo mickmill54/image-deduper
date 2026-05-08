@@ -90,7 +90,11 @@ def _cmd_scan(args: argparse.Namespace, ui: UI) -> int:
     # Lazy import: keeps `dedupe --help` / `dedupe --version` startup snappy.
     from dedupe.scan import ScanOptions, run_scan  # noqa: PLC0415
 
-    folder: Path = args.folder
+    # Resolve to absolute so `dedupe scan .` lands the dups folder as a
+    # sibling of the source rather than inside it (see #43). Path("."),
+    # Path("./photos"), and similar collapse `.parent` to themselves
+    # otherwise.
+    folder: Path = args.folder.resolve()
     dups_folder: Path = args.dups_folder or folder.parent / f"{folder.name}-dups"
 
     opts = ScanOptions(

@@ -8,6 +8,35 @@ Version bumps follow the conventional-commits convention described in `CLAUDE.md
 
 ## [Unreleased]
 
+## [0.10.1](https://github.com/mickmill54/image-deduper/releases/tag/v0.10.1) — 2026-05-07
+
+Bug fix: `dedupe scan .`, `dedupe sweep .`, and `dedupe convert .` no
+longer place their destination folders **inside** the source folder.
+
+### Fixed
+
+- **#43** — When invoked with `.` (or any path whose `.parent` is the
+  same path), all three subcommands collapsed the sibling-destination
+  computation `src.parent / f"{src.name}-suffix"` into a relative path
+  that landed inside the source. Reported on a real run against
+  `/Volumes/SSD-EXT/iPhone` where the videos wrapper became
+  `iPhone/ - MOV/` (literal leading-space-dash) instead of
+  `iPhone - videos/` as a sibling.
+
+  Fix: each CLI handler resolves the source path to absolute before
+  building its `Options` dataclass. `Path("./photos")`, `Path(".")`,
+  and `Path("/abs/path")` now all behave identically. Regression tests
+  pinned for `scan`, `sweep`, and `convert`.
+
+### Notes
+
+- Manifests from a v0.10.0-or-earlier sweep run with `.` as source
+  remain readable: the relative paths inside them stay internally
+  consistent (`new_path` and `original_path` are both relative to the
+  cwd at sweep time), so a hand-rolled restore script run from that
+  cwd recovers the data correctly. Native `dedupe restore` for sweep
+  manifests is still tracked separately as #42.
+
 ## [0.10.0](https://github.com/mickmill54/image-deduper/releases/tag/v0.10.0) — 2026-05-07
 
 `dedupe sweep --videos` gets a redesigned destination layout. The old
