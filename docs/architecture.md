@@ -22,15 +22,25 @@ changes.
 src/dedupe/
 ├── __init__.py         __version__
 ├── __main__.py         python -m dedupe
-├── cli.py              argparse parser, subcommand dispatch
 ├── ui.py               rich-backed console; respects --quiet, --json, --no-color, NO_COLOR
-├── manifest.py         JSON manifest read/write (atomic incremental writes)
+├── walk.py             generic file-tree walker + filter helpers (is_hidden, matches_exclude, rel)
+├── manifest.py         AtomicManifestWriter[Entry] generic + scan-specific ManifestWriter wrapper
 ├── scan.py             SHA-256 hashing, grouping, move-to-quarantine
 ├── restore.py          manifest replay with conflict detection
 ├── similar.py          perceptual hash, grouping, HTML report
 ├── convert.py          image format conversion (originals untouched)
 ├── info.py             read-only folder stats / breakdown (no mutation)
-└── sweep.py            clear out non-photo content (currently: junk-file mode)
+├── sweep.py            clear out non-photo content (currently: junk-file mode)
+└── cli/                CLI package: one module per subcommand
+    ├── __init__.py     main() entrypoint + dispatch
+    ├── parser.py       build_parser shell, global flags, exit-code constants
+    ├── output.py       shared formatters (format_bytes, future helpers)
+    ├── scan.py         `dedupe scan` parser config + handler
+    ├── find_similar.py `dedupe find-similar` parser config + handler
+    ├── restore.py      `dedupe restore` parser config + handler
+    ├── convert.py      `dedupe convert` parser config + handler
+    ├── info.py         `dedupe info` parser config + handler
+    └── sweep.py        `dedupe sweep` parser config + handler
 ```
 
 Rules of thumb:
@@ -38,11 +48,26 @@ Rules of thumb:
 - Only `ui.py` writes to stdout/stderr. Every other module takes a `UI`
   instance and routes through it.
 - `similar.py` and `convert.py` are the modules that import Pillow /
-  imagehash / pillow-heif. `cli.py` defers their imports lazily so
-  `dedupe scan` doesn't load the imaging stack.
+  imagehash / pillow-heif. The per-subcommand handlers under `cli/`
+  defer those imports lazily so `dedupe scan` doesn't load the imaging
+  stack.
 - `scan.py`, `restore.py`, `similar.py`, `convert.py`, `info.py`, and
   `sweep.py` each expose a single `run_*` entry point. CLI handlers in
-  `cli.py` build the options dataclass and call it.
+  `cli/<subcommand>.py` build the options dataclass and call it.
+- `cli/` is a package, not a single file. Each subcommand owns its
+  parser config + `_cmd_*` handler in its own module; `cli/__init__.py`
+  iterates a `SUBCOMMANDS` tuple and registers each. Adding a new
+  subcommand is "create one file + add one import line."
+- `walk.py` owns the shared file-tree walker (`walk_files(opts,
+  predicate)`) and the public helpers (`is_hidden`, `matches_exclude`,
+  `rel`). `scan.iter_image_files` and `sweep._iter_candidate_files`
+  are thin wrappers; `info` keeps a specialized walker (it counts
+  hidden + broken-symlink separately) but reuses the helpers.
+- `manifest.py` exposes a generic `AtomicManifestWriter[Entry]` plus a
+  `ManifestWriter` compatibility shim for scan's keyword-arg API and
+  resume support. `convert` and `sweep` use the generic directly via
+  small factory functions (`_make_archive_manifest_writer`,
+  `_make_sweep_manifest_writer`).
 - Filesystem mutation is confined to: `_move_one()` in `scan.py`, the
   `shutil.move(...)` calls in `restore.py` and `convert.py` (the latter
   during `--archive-originals`), the `Image.save(...)` call in
@@ -264,7 +289,8 @@ the archive folder via `shutil.move`, and the move is recorded in an
 `archive-manifest.json` flushed-after-every-entry. The archive pass is
 single-threaded and runs *after* the parallel conversion phase, so the
 manifest order matches the conversion order and we don't need a lock
-around manifest writes outside `_ArchiveManifestWriter`'s own lock.
+around manifest writes outside the generic
+`AtomicManifestWriter[ArchiveEntry]`'s own lock.
 
 These guarantees are covered by:
 - `test_convert_jpg_to_png_mirrors_layout` — originals untouched without the flag
@@ -279,72 +305,101 @@ These guarantees are covered by:
 
 The codebase is mostly functions plus small frozen dataclasses (option
 records, result records, manifest entries). The classes with non-trivial
-behavior are `UI` (plus its progress-handle helpers), `ManifestWriter`
-(append-and-flush for the dups manifest), and `_ArchiveManifestWriter`
-(thread-safe append-and-flush for `convert --archive-originals`).
+behavior are `UI` (plus its progress-handle helpers) and
+`AtomicManifestWriter[Entry]` — the generic atomic-flushed JSON writer
+that backs every manifest in the project. `ManifestWriter` is a thin
+compatibility wrapper around the generic that preserves scan's
+keyword-arg `add(...)` API and resume-support contract.
 
 ```
-┌──────────────────────────┐         ┌──────────────────────────┐
-│ UIConfig (dataclass)     │         │ Manifest (dataclass)     │
-│ - verbose: bool          │         │ - version: int           │
-│ - quiet: bool            │         │ - created_at: str        │
-│ - no_color: bool         │         │ - source_folder: str     │
-│ - json_mode: bool        │         │ - dups_folder: str       │
-└────────────┬─────────────┘         │ - entries: list[…]       │
-             │                       └────────────┬─────────────┘
-             ▼                                    ▲
-┌──────────────────────────┐                      │ aggregates
-│ UI                       │         ┌────────────┴─────────────┐
-│ + info / detail /        │         │ ManifestEntry (frozen)   │
-│   success / warn / error │         │ - original_path: str     │
-│ + emit_json              │         │ - new_path: str          │
-│ + progress (cm)          │         │ - sha256: str            │
-└──────────────────────────┘         │ - kept_path: str         │
-             ▲                       │ - size_bytes: int        │
-             │ used by               │ - timestamp: str         │
-             │                       └──────────────────────────┘
-┌────────────┼──────────────────────┐                ▲
-│            │                      │                │ writes
-│  ┌─────────┴──────────┐           │   ┌────────────┴───────────┐
-│  │ run_scan(opts, ui) │──────────────▶│ ManifestWriter         │
-│  └────────────────────┘           │   │ + add(...)             │
-│  ┌────────────────────┐           │   │ - _write() (atomic)    │
-│  │ run_restore(...)   │──┐        │   │ ⤺ resume_from?         │
-│  └────────────────────┘  │        │   └────────────────────────┘
-│  ┌────────────────────┐  │ reads  │
-│  │ run_find_similar(…)│  │        │   ┌────────────────────────┐
-│  └────────────────────┘  │        │   │ manifest.load(path)    │
-│  ┌────────────────────┐  │        │   └────────────────────────┘
-│  │ run_convert(...)   │──────────────▶┌────────────────────────┐
-│  └────────────────────┘  │        │   │ _ArchiveManifestWriter │
-│  ┌────────────────────┐  │        │   │ + add(...) (locked)    │
-│  │ run_info(...)      │  │        │   │ - _write() (atomic)    │
-│  └────────────────────┘  │        │   └────────────────────────┘
-│                          └────────────                          │
-│   command handlers in cli.py                                    │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────┐         ┌──────────────────────────────┐
+│ UIConfig (dataclass)     │         │ AtomicManifestWriter[Entry]  │
+│ - verbose: bool          │         │ + add(entry)        (locked) │
+│ - quiet: bool            │         │ + add_existing_entries(...)  │
+│ - no_color: bool         │         │ - _flush() (atomic rename)   │
+│ - json_mode: bool        │         └──────────────┬───────────────┘
+└────────────┬─────────────┘                        │ wraps
+             │                                      │
+             ▼                       ┌──────────────┴───────────────┐
+┌──────────────────────────┐         │ ManifestWriter (scan compat) │
+│ UI                       │         │ + add(*, original_path,      │
+│ + info / detail /        │         │       new_path, sha256, ...) │
+│   success / warn / error │         │ ⤺ resume_from?               │
+│ + emit_json              │         └──────────────────────────────┘
+│ + progress (cm)          │
+└──────────────────────────┘                        ▲
+             ▲                                      │ writes
+             │ used by                              │
+┌────────────┼──────────────────────┐               │
+│            │                      │               │
+│  ┌─────────┴──────────┐           │               │
+│  │ run_scan(opts, ui) │───────────────────────────┤
+│  └────────────────────┘           │               │
+│  ┌────────────────────┐           │   ┌───────────┴────────────────┐
+│  │ run_restore(...)   │──┐        │   │ AtomicManifestWriter       │
+│  └────────────────────┘  │        │   │   [ArchiveEntry] (convert) │
+│  ┌────────────────────┐  │ reads  │   └────────────────────────────┘
+│  │ run_find_similar(…)│  │        │   ┌────────────────────────────┐
+│  └────────────────────┘  │        │   │ AtomicManifestWriter       │
+│  ┌────────────────────┐  │        │   │   [SweepEntry]   (sweep)   │
+│  │ run_convert(...)   │──────────────▶└────────────────────────────┘
+│  └────────────────────┘  │        │   ┌────────────────────────────┐
+│  ┌────────────────────┐  │        │   │ manifest.load(path)        │
+│  │ run_info(...)      │  │        │   │   → returns Manifest +     │
+│  └────────────────────┘  │        │   │     list[ManifestEntry]    │
+│  ┌────────────────────┐  │        │   └────────────────────────────┘
+│  │ run_sweep(...)     │──────────────▶                              │
+│  └────────────────────┘  │        │
+│                          └────────────                              │
+│   run_* called from cli/<subcommand>.py handlers                    │
+└─────────────────────────────────────────────────────────────────────┘
+
+  Module split (one parser+handler per subcommand):
+
+    cli/__init__.py        main() + dispatch
+    cli/parser.py          build_parser, add_global_flags, exit codes
+    cli/output.py          format_bytes (and future shared formatters)
+    cli/scan.py            register() + _cmd_scan()
+    cli/find_similar.py    register() + _cmd_find_similar()
+    cli/restore.py         register() + _cmd_restore()
+    cli/convert.py         register() + _cmd_convert() + _resolve_source_exts()
+    cli/info.py            register() + _cmd_info()
+    cli/sweep.py           register() + _cmd_sweep() + _emit_summary()
+
+  Walker (consolidated in walk.py):
+
+    walk_files(WalkOptions, predicate=...)  ← used by scan, sweep, convert
+    is_hidden(path, source)                 ← public helper
+    matches_exclude(path, source, patterns) ← public helper
+    rel(path, source)                       ← public helper
 
   Options & results (all @dataclass(frozen=True) unless noted):
 
     ScanOptions          ScanResult              SimilarOptions
     RestoreOptions       RestoreResult           SimilarResult
-    SimilarGroup
+    SimilarGroup         WalkOptions
     ConvertOptions       ConvertResult           ArchiveEntry
     InfoOptions          InfoResult (mutable; counters built up in place)
+    SweepOptions         SweepResult             SweepEntry
+    ManifestEntry        Manifest (mutable; the on-disk shape)
 ```
 
-The arrow conventions: solid arrows are "uses / calls"; the `aggregates`
-arrow on the right shows that a `Manifest` holds a list of
-`ManifestEntry`. `⤺ resume_from?` on `ManifestWriter` denotes the
-optional resumable-scan parameter (preserves `created_at` and existing
-entries when reopening a partial run).
+The arrow conventions: solid arrows are "uses / calls". `⤺
+resume_from?` on `ManifestWriter` denotes the optional resumable-scan
+parameter (preserves `created_at` and existing entries when reopening
+a partial run). The `AtomicManifestWriter[Entry]` generic shows up
+three times because each subcommand parameterizes it with its own
+entry type — but it's the same class under the hood.
 
 ## Why argparse instead of Click / Typer?
 
 The spec mandates argparse — keeps the dependency footprint minimal and
 gives us argparse's exit-code-2 behavior on bad input for free. The
 trade-off is verbosity in subparser setup, which is contained in
-`_build_parser()` and `_add_global_flags()` in `cli.py`.
+`build_parser()` and `add_global_flags()` in `cli/parser.py`. Each
+subcommand's own subparser config + handler lives in its own module
+under `cli/`, so adding a new subcommand never touches the dispatch
+logic.
 
 ## Threading model
 
@@ -623,10 +678,17 @@ directly.
 
 ## Adding a new subcommand
 
-1. Add a module under `src/dedupe/` exposing a `run_*` function and an
-   `*Options` dataclass.
-2. Add a subparser block + `_cmd_*` handler in `cli.py`. Register it with
-   `set_defaults(func=...)`.
-3. Add tests under `tests/`. Reuse `fixture_tree`/`similar_tree` if the
-   shape fits, or add a new fixture in `conftest.py`.
-4. Document the flags in `README.md` and add an entry in `CHANGELOG.md`.
+1. **Runtime module** — add `src/dedupe/<name>.py` exposing a `run_<name>`
+   function and an `<Name>Options` / `<Name>Result` dataclass pair.
+   Use `walk.walk_files(opts, predicate)` for the file walk; use
+   `manifest.AtomicManifestWriter[<EntryT>]` for any audit log.
+2. **CLI module** — add `src/dedupe/cli/<name>.py` exposing `register(sub)`
+   (configures the subparser) and `_cmd_<name>(args, ui)` (the
+   handler). Register it in `cli/__init__.py`'s `SUBCOMMANDS` tuple.
+3. **Tests** — add `tests/test_<name>.py`. Reuse `fixture_tree` /
+   `convert_tree` / `similar_tree` if shape fits; otherwise add a new
+   fixture in `conftest.py`.
+4. **Docs** — document the flags in `README.md` (subcommand listing +
+   flags table + usage example), add a CHANGELOG entry, and add a
+   data-flow diagram + (if it adds new safety semantics) an update to
+   the safety-invariants section in `CLAUDE.md`.

@@ -8,38 +8,88 @@ Version bumps follow the conventional-commits convention described in `CLAUDE.md
 
 ## [Unreleased]
 
-### Added
-- **`make audit`** — comprehensive code-quality audit suite borrowing
-  the multi-check shape from a sibling project. 10 checks across two
-  tiers: 5 hard gates (`ruff`, `pyright`, `pytest --cov-fail-under=80`,
-  `pre-commit run --all-files`, project-specific destructive-call
-  safety check) and 5 report-only signals (`bandit`, `pip-audit`,
-  `radon cc`, `radon mi`, `vulture`). Implemented as `scripts/audit.sh`
-  with a PASS/FAIL summary table.
+## [0.8.0](https://github.com/mickmill54/image-deduper/releases/tag/v0.8.0) — 2026-05-07
+
+DRY refactor + code-quality audit suite. **No CLI behavior change** —
+every flag, default, and `--help` output is identical to v0.7.0.
+
+### Added (audit suite, originally in #34)
+
+- **`make audit`** — 10-check code-quality + safety suite borrowing the
+  multi-check shape from a sibling project. 5 hard gates (`ruff`,
+  `pyright`, `pytest --cov-fail-under=80`, `pre-commit run --all-files`,
+  project-specific destructive-call safety check) and 5 report-only
+  signals (`bandit`, `pip-audit`, `radon cc`, `radon mi`, `vulture`).
+  Implemented as `scripts/audit.sh` with a PASS/FAIL summary table.
 - **`make audit-fast`** — local-dev subset (~5s) skipping the
   pre-commit drift check and CVE scan.
-- **Project-specific safety check** (`scripts/check_no_destructive_calls.sh`)
-  greps `src/dedupe/` for forbidden destructive patterns
+- **`scripts/check_no_destructive_calls.sh`** — project-specific safety
+  check that greps `src/dedupe/` for forbidden destructive patterns
   (`os.remove`, `shutil.rmtree`, `Path.rmdir`, `os.unlink`) and allows
   `Path.unlink` only inside `src/dedupe/sweep.py`. Hard-gates the audit
-  to keep CLAUDE.md's "never delete files (except sweep --junk)"
-  invariant automatic, not just code-review-enforced.
+  to keep the "never delete files (except sweep --junk)" invariant
+  automatic instead of code-review-enforced.
 - **Audit GitHub Actions workflow** (`.github/workflows/audit.yml`)
   runs nightly at 09:00 UTC and on `workflow_dispatch`. Uploads the
-  audit report as a workflow artifact (30-day retention). NOT wired
-  into PR checks — fast feedback (lint/typecheck/test) stays as the
-  per-PR gate; the full audit runs separately so CVE scans and
-  complexity grading don't slow down the dev loop.
+  audit report as a 30-day workflow artifact. NOT wired into PR
+  checks — fast feedback stays as the per-PR gate.
 - Dev deps: `bandit`, `pip-audit`, `radon`, `xenon`, `vulture`.
 
+### Changed (DRY refactor, originally in #35)
+
+Three concrete duplications consolidated. **No on-disk JSON shape
+changes**, **no CLI surface changes**, **no test changes** — pure
+internal cleanup driven by the audit's complexity findings.
+
+- **`src/dedupe/walk.py`** (new): shared file-tree walker plus
+  `is_hidden` / `matches_exclude` / `rel` helpers. Three previous
+  walkers (`scan.iter_image_files`, `sweep._iter_candidate_files`,
+  inline `rglob` in `info.py`) and three filter helpers (private
+  underscore-prefixed in `scan.py`, imported across modules) collapsed
+  into one module with one `walk_files(opts, predicate)` generic. Each
+  subcommand now uses the shared helpers; scan and sweep walkers
+  become thin wrappers; info keeps its specialized walker (it counts
+  hidden + broken-symlink separately) but uses the public helpers.
+- **`AtomicManifestWriter[Entry]`** in `manifest.py`: generic
+  atomic-flushed JSON writer. Three previous writers (`ManifestWriter`,
+  `_ArchiveManifestWriter`, `_SweepManifestWriter`) collapsed to one.
+  `ManifestWriter` survives as a thin compatibility shim around the
+  generic so `scan.py` keeps its existing keyword-arg `add(...)` API
+  and `resume_from` parameter. `_ArchiveManifestWriter` and
+  `_SweepManifestWriter` deleted in favor of small factory functions.
+- **`src/dedupe/cli/`** package: `cli.py` (912 lines) split into one
+  file per subcommand, plus `parser.py` (build_parser, helpers,
+  exit-code constants) and `output.py` (shared formatters).
+  Largest file post-split: `cli/convert.py` at 266 lines. Adding a new
+  subcommand becomes "create one file + add one import line in
+  `cli/__init__.py`."
+- `_cmd_convert` cyclomatic complexity dropped from D (23) to C (19)
+  by extracting `_resolve_source_exts()`. `_cmd_sweep` complexity
+  dropped from C (16) off the C+ list by extracting `_emit_summary()`.
+
+### Audit baseline → post-refactor diff
+
+Same 5/5 hard gates pass before and after the refactor. Report-only
+findings:
+
+- **Radon CC**: 8 functions flagged → 7. `_cmd_convert` D(23) → C(19).
+  `_cmd_sweep` C(16) → off list. `iter_image_files` C(13) → off list.
+  New: `walk.walk_files` C(14) — but this single function replaces
+  the work of three separate ones.
+- **Bandit, pip-audit, radon MI, vulture**: clean before, clean after.
+- **Coverage**: 85% before, 85% after (no test changes).
+
 ### Notes
-- No version bump for this change — audit is observational; nothing
-  about the installed CLI changes. The next version bump bundles with
-  the upcoming refactor (`#35`).
-- First baseline audit findings: 5/5 hard gates pass; report-only
-  surfaced 8 functions at Radon CC grade C+. These align with the
-  refactor scope already documented in `#35` and informed its priority
-  ordering.
+
+- The CLI surface is **byte-for-byte identical** to v0.7.0. `dedupe
+  --help` and every subcommand's `--help` produce the same output;
+  every flag works the same way.
+- On-disk manifest JSON shape is preserved exactly — restore from a
+  v0.7.0 manifest works against v0.8.0 unchanged.
+- The new `cli/` package shadows `cli.py` (which was deleted). The
+  import path `from dedupe.cli import main` continues to work because
+  Python loads `__init__.py` when you `import dedupe.cli`. The
+  pyproject entry point `dedupe = "dedupe.cli:main"` is unchanged.
 
 ## [0.7.0](https://github.com/mickmill54/image-deduper/releases/tag/v0.7.0) — 2026-05-07
 
