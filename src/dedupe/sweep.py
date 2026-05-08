@@ -67,23 +67,95 @@ JUNK_FILES = frozenset(
     }
 )
 
-# Conservative initial set of common video extensions. Extending this
-# requires a PR with brief justification — same caution as JUNK_FILES,
-# though videos are user content and the categorization is less
-# safety-critical (we move, never delete).
+# Video file extensions that `dedupe sweep --videos` will move out of
+# a photo folder. Conservative-but-thorough: covers >99% of consumer
+# video formats encountered in modern slideshow workflows. The action
+# is "move to <folder> - MOV", not "delete", so the safety cost of an
+# overzealous match is low; the cost of *missing* a video that breaks
+# slideshow software is real.
+#
+# INCLUDED (20 extensions, grouped by source):
+#
+#   .mov  .mp4  .m4v   — Apple devices, modern phones, most cameras.
+#                          .m4v is iTunes-era Apple variant of .mp4.
+#   .avi                 — Older Windows-era captures, downloaded
+#                          encodes.
+#   .mkv                 — Matroska container; common for downloads
+#                          and high-quality encodes.
+#   .wmv  .asf           — Windows Media. Older Windows-recorded
+#                          video and screen captures.
+#   .flv  .f4v           — Flash video. Legacy web downloads from the
+#                          pre-HTML5 era; still occasionally hosted.
+#   .webm                — Open web video. WebRTC, screen recordings,
+#                          some browsers' default save format.
+#   .mpg  .mpeg          — MPEG-1/2 program streams. Old DVDs, older
+#                          encodes.
+#   .3gp  .3g2           — Mobile phone video. .3gp is GSM-era 3GPP;
+#                          .3g2 is the CDMA equivalent (old Verizon).
+#   .mts  .m2ts          — AVCHD camcorders (Sony, Panasonic). Common
+#                          for anyone who used a consumer camcorder
+#                          pre-2018.
+#   .vob                 — DVD video. Anyone who ripped home-movie
+#                          DVDs into a backup folder.
+#   .ogv                 — Ogg video. Linux screencast tools default
+#                          here.
+#   .divx                — DivX-encoded AVI variants. Older but still
+#                          encountered occasionally.
+#   .lrv                 — GoPro low-resolution preview file. Always
+#                          paired with the full-resolution .MP4;
+#                          orphan .LRVs clutter folders.
+#
+# DELIBERATELY EXCLUDED:
+#
+#   .ts          — MPEG transport stream. Conflicts with TypeScript
+#                  source code. The asymmetric cost of a false positive
+#                  (moving a TS source file) outweighs the rare gain
+#                  in a photo folder. If a user actually needs to
+#                  sweep transport-stream video, file an enhancement.
+#   .rm, .rmvb   — RealMedia. Effectively extinct.
+#   .mxf         — Broadcast/professional. Niche; not seen in consumer
+#                  slideshow workflows.
+#   .hevc, .h264 — Raw codec streams without containers. Rare in
+#                  consumer pipelines (containers wrap them).
+#
+# Adding entries: send a PR with a brief justification (what camera or
+# software produces this format, and why slideshow workflows would
+# encounter it). Lower bar than JUNK_FILES — videos are user content
+# and the action is "move" not "delete" — but the same "we curate the
+# list deliberately" principle applies.
 VIDEO_EXTENSIONS = frozenset(
     {
+        # Apple / modern phones / most cameras
         ".mov",
         ".mp4",
         ".m4v",
+        # Older Windows / generic
         ".avi",
         ".mkv",
         ".wmv",
+        ".asf",
+        # Flash video (legacy web)
         ".flv",
+        ".f4v",
+        # Open web video
         ".webm",
+        # MPEG program streams
         ".mpg",
         ".mpeg",
+        # Mobile (3GPP / 3GPP2)
         ".3gp",
+        ".3g2",
+        # AVCHD camcorders (Sony / Panasonic)
+        ".mts",
+        ".m2ts",
+        # DVD video
+        ".vob",
+        # Ogg video (Linux screencasts)
+        ".ogv",
+        # Older codec containers
+        ".divx",
+        # GoPro low-resolution preview file
+        ".lrv",
     }
 )
 

@@ -317,19 +317,75 @@ def test_clean_folder_returns_zero(tmp_path: Path):
 
 
 def test_video_extensions_constant_contents():
-    # Spot-check the documented video allowlist.
-    assert ".mov" in VIDEO_EXTENSIONS
-    assert ".mp4" in VIDEO_EXTENSIONS
-    assert ".m4v" in VIDEO_EXTENSIONS
-    assert ".mkv" in VIDEO_EXTENSIONS
+    # The full documented allowlist (19 extensions). Update this test in
+    # lockstep with VIDEO_EXTENSIONS to make additions explicit in code review.
+    expected = {
+        ".mov",
+        ".mp4",
+        ".m4v",  # Apple / modern phones
+        ".avi",
+        ".mkv",
+        ".wmv",
+        ".asf",  # Older Windows / generic
+        ".flv",
+        ".f4v",  # Flash (legacy web)
+        ".webm",  # Open web video
+        ".mpg",
+        ".mpeg",  # MPEG program streams
+        ".3gp",
+        ".3g2",  # Mobile (3GPP / 3GPP2)
+        ".mts",
+        ".m2ts",  # AVCHD camcorders
+        ".vob",  # DVD video
+        ".ogv",  # Ogg video
+        ".divx",  # DivX-encoded AVI variant
+        ".lrv",  # GoPro preview file
+    }
+    assert expected == VIDEO_EXTENSIONS
     # Lowercase by design — classifier normalizes via path.suffix.lower().
     assert ".MP4" not in VIDEO_EXTENSIONS
+
+
+def test_video_extensions_deliberately_excluded():
+    """Document the formats we explicitly chose NOT to include, so a
+    drive-by addition has to confront the rationale comment in sweep.py."""
+    # MPEG transport stream — conflicts with TypeScript source code.
+    assert ".ts" not in VIDEO_EXTENSIONS
+    # RealMedia — effectively extinct.
+    assert ".rm" not in VIDEO_EXTENSIONS
+    assert ".rmvb" not in VIDEO_EXTENSIONS
+    # Broadcast / professional — niche.
+    assert ".mxf" not in VIDEO_EXTENSIONS
+    # Raw codec streams (without containers) — rare in consumer pipelines.
+    assert ".hevc" not in VIDEO_EXTENSIONS
+    assert ".h264" not in VIDEO_EXTENSIONS
 
 
 def test_is_video_file(tmp_path: Path):
     assert is_video_file(tmp_path / "movie.mov")
     assert is_video_file(tmp_path / "movie.MP4")  # case-insensitive
     assert not is_video_file(tmp_path / "photo.jpg")
+
+
+def test_is_video_file_covers_all_documented_extensions(tmp_path: Path):
+    """Every extension in the documented allowlist classifies as a video.
+    Catches the case where someone adds an extension to VIDEO_EXTENSIONS
+    but breaks `is_video_file` (it's a one-line check, but tests are cheap)."""
+    for ext in VIDEO_EXTENSIONS:
+        assert is_video_file(tmp_path / f"sample{ext}"), f"{ext} should classify as video"
+        # Case-insensitivity check (suffix.lower() in the classifier)
+        assert is_video_file(
+            tmp_path / f"sample{ext.upper()}"
+        ), f"{ext.upper()} should classify as video too"
+
+
+def test_is_video_file_rejects_excluded_extensions(tmp_path: Path):
+    """Files with deliberately-excluded extensions must NOT classify as videos
+    (otherwise --videos --non-images would route them to the wrong category)."""
+    for ext in (".ts", ".rm", ".rmvb", ".mxf", ".hevc", ".h264"):
+        assert not is_video_file(
+            tmp_path / f"sample{ext}"
+        ), f"{ext} is deliberately excluded; must not classify as video"
 
 
 def test_is_image_file(tmp_path: Path):
