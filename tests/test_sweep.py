@@ -13,6 +13,7 @@ from dedupe.sweep import (
     JUNK_FILES,
     VIDEO_EXTENSIONS,
     SweepOptions,
+    _videos_dest_for,
     is_image_file,
     is_junk_file,
     is_video_file,
@@ -506,25 +507,46 @@ def test_non_images_dry_run_makes_no_changes(mixed_tree: Path, tmp_path: Path):
 # --- videos mode ------------------------------------------------------------
 
 
-def test_videos_moves_to_default_dash_MOV_folder(mixed_tree: Path):
-    """Default destination is `<source> - MOV` (space-dash-space, all caps)
-    matching the existing manual convention."""
+def test_videos_moves_to_default_dash_videos_folder(mixed_tree: Path):
+    """Default destination is `<source> - videos` and every mirrored
+    subdirectory inside gains a ` - videos` suffix so paths remain
+    self-documenting if the folder is moved out of context."""
     result = run_sweep(SweepOptions(source=mixed_tree, sweep_videos=True), QUIET)
     # 3 videos: birthday.mov, ski.mp4, sub/trip.MOV (case-insensitive ext)
     assert result.videos_swept == 3
     assert result.files_swept == 3
 
-    expected_destination = mixed_tree.parent / f"{mixed_tree.name} - MOV"
+    expected_destination = mixed_tree.parent / f"{mixed_tree.name} - videos"
     assert expected_destination.is_dir()
+    # Source-root videos go directly under the wrapper (no extra subfolder)
     assert (expected_destination / "birthday.mov").is_file()
     assert (expected_destination / "ski.mp4").is_file()
-    assert (expected_destination / "sub" / "trip.MOV").is_file()
+    # `sub/` becomes `sub - videos/` inside the wrapper
+    assert (expected_destination / "sub - videos" / "trip.MOV").is_file()
+    # The un-suffixed `sub/` path must NOT be created
+    assert not (expected_destination / "sub").exists()
     assert (expected_destination / "sweep-manifest.json").is_file()
 
     # Source: videos gone, images preserved
     assert not (mixed_tree / "birthday.mov").exists()
     assert (mixed_tree / "photo.jpg").exists()
     assert (mixed_tree / "sub" / "other_photo.jpg").exists()
+
+
+def test_videos_dest_for_helper():
+    """Unit test the path-translation helper so the contract is pinned."""
+    # Source-root file: no parents to suffix.
+    assert _videos_dest_for(Path("trip.mov")) == Path("trip.mov")
+    # Single subdir gains the suffix.
+    assert _videos_dest_for(Path("2008 - iPhone/movie.mov")) == Path(
+        "2008 - iPhone - videos/movie.mov"
+    )
+    # Every parent component gains the suffix; basename stays put.
+    assert _videos_dest_for(Path("2009 - iPhone/archive/old.mov")) == Path(
+        "2009 - iPhone - videos/archive - videos/old.mov"
+    )
+    # Idempotent: a parent that already ends in " - videos" is left alone.
+    assert _videos_dest_for(Path("trip - videos/clip.mov")) == Path("trip - videos/clip.mov")
 
 
 def test_videos_custom_destination(mixed_tree: Path, tmp_path: Path):
@@ -589,9 +611,9 @@ def test_all_three_modes_combined(mixed_tree: Path, tmp_path: Path):
     assert (non_images / "notes.txt").is_file()
     assert (non_images / "sub" / "song.mp3").is_file()
 
-    # Videos: moved to their folder
+    # Videos: moved to their folder; sub/ gains the ` - videos` suffix
     assert (videos / "birthday.mov").is_file()
-    assert (videos / "sub" / "trip.MOV").is_file()
+    assert (videos / "sub - videos" / "trip.MOV").is_file()
 
     # Images: preserved
     assert (mixed_tree / "photo.jpg").exists()

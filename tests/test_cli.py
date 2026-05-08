@@ -271,7 +271,7 @@ def test_cli_sweep_json_output(tmp_path: Path, capsys):
     assert payload["entries"][0]["action"] == "deleted"
 
 
-def test_cli_sweep_videos_default_dash_MOV_destination(tmp_path: Path):
+def test_cli_sweep_videos_default_dash_videos_destination(tmp_path: Path):
     src = tmp_path / "photos"
     src.mkdir()
     (src / "trip.mov").write_bytes(b"video")
@@ -280,12 +280,41 @@ def test_cli_sweep_videos_default_dash_MOV_destination(tmp_path: Path):
     rc = main(["sweep", str(src), "--videos", "--quiet"])
     assert rc == 0
 
-    # Default destination: `<src> - MOV` (note the spaces)
-    expected = src.parent / f"{src.name} - MOV"
+    # Default destination is `<src> - videos`; root files land directly
+    # inside the wrapper (no extra subfolder).
+    expected = src.parent / f"{src.name} - videos"
     assert (expected / "trip.mov").is_file()
     assert (expected / "sweep-manifest.json").is_file()
     # Image preserved
     assert (src / "keep.jpg").exists()
+
+
+def test_cli_sweep_videos_subdir_layout(tmp_path: Path):
+    """End-to-end: a year-folder full of videos lands in `<year> - videos/`
+    inside the wrapper, with the basename intact."""
+    src = tmp_path / "Photos"
+    src.mkdir()
+    year = src / "2008 - iPhone"
+    year.mkdir()
+    (year / "movie.mov").write_bytes(b"v")
+    (year / "clip.mp4").write_bytes(b"v")
+    nested = src / "2009 - iPhone" / "archive"
+    nested.mkdir(parents=True)
+    (nested / "old.mov").write_bytes(b"v")
+    (src / "photo.jpg").write_bytes(b"\xff\xd8")
+
+    rc = main(["sweep", str(src), "--videos", "--quiet"])
+    assert rc == 0
+
+    wrapper = src.parent / f"{src.name} - videos"
+    assert (wrapper / "2008 - iPhone - videos" / "movie.mov").is_file()
+    assert (wrapper / "2008 - iPhone - videos" / "clip.mp4").is_file()
+    assert (wrapper / "2009 - iPhone - videos" / "archive - videos" / "old.mov").is_file()
+    # Un-suffixed mirror paths must NOT exist.
+    assert not (wrapper / "2008 - iPhone").exists()
+    assert not (wrapper / "2009 - iPhone").exists()
+    # Image preserved at source.
+    assert (src / "photo.jpg").exists()
 
 
 def test_cli_sweep_non_images_moves_user_content(tmp_path: Path):
@@ -327,7 +356,7 @@ def test_cli_sweep_combined_modes(tmp_path: Path):
 
     # Each category went to its own folder
     assert (src.parent / f"{src.name}-non-images" / "notes.txt").is_file()
-    assert (src.parent / f"{src.name} - MOV" / "trip.mov").is_file()
+    assert (src.parent / f"{src.name} - videos" / "trip.mov").is_file()
     # Junk deleted (default), audit log written
     assert (src.parent / f"{src.name}-sweep-log" / "sweep-manifest.json").is_file()
     assert not (src / "Thumbs.db").exists()
