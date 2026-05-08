@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dedupe.cli import _flatten_list_arg
+from dedupe.cli.parser import flatten_list_arg as _flatten_list_arg
 
 
 def test_none_returns_empty():
