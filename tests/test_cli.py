@@ -206,6 +206,70 @@ def test_cli_scan_exclude_flag_comma_list(fixture_tree: Path):
     assert (fixture_tree / "archive" / "dup2_copy.png").exists()
 
 
+def test_cli_sweep_junk_default_deletes_with_manifest(tmp_path: Path):
+    src = tmp_path / "photos"
+    src.mkdir()
+    (src / "Thumbs.db").write_text("cache")
+    (src / "sub").mkdir()
+    (src / "sub" / ".DS_Store").write_text("meta")
+    (src / "keep.jpg").write_bytes(b"\xff\xd8")
+
+    rc = main(["sweep", str(src), "--junk", "--quiet"])
+    assert rc == 0
+
+    # Junk gone, real file preserved.
+    assert not (src / "Thumbs.db").exists()
+    assert not (src / "sub" / ".DS_Store").exists()
+    assert (src / "keep.jpg").exists()
+
+    # Default log folder created.
+    log_folder = src.parent / f"{src.name}-sweep-log"
+    assert (log_folder / "sweep-manifest.json").is_file()
+
+
+def test_cli_sweep_quarantine_junk_mirrors_layout(tmp_path: Path):
+    src = tmp_path / "photos"
+    src.mkdir()
+    (src / "Thumbs.db").write_text("a")
+    (src / "sub").mkdir()
+    (src / "sub" / "Thumbs.db").write_text("b")  # same name, different parent
+
+    rc = main(["sweep", str(src), "--junk", "--quarantine-junk", "--quiet"])
+    assert rc == 0
+
+    quarantine = src.parent / f"{src.name}-junk"
+    # Both Thumbs.db files coexist in the mirrored quarantine.
+    assert (quarantine / "Thumbs.db").is_file()
+    assert (quarantine / "sub" / "Thumbs.db").is_file()
+    assert (quarantine / "sweep-manifest.json").is_file()
+
+
+def test_cli_sweep_dry_run(tmp_path: Path):
+    src = tmp_path / "photos"
+    src.mkdir()
+    (src / "Thumbs.db").write_text("cache")
+
+    rc = main(["sweep", str(src), "--junk", "--dry-run", "--quiet"])
+    assert rc == 0
+    # Nothing changed.
+    assert (src / "Thumbs.db").exists()
+    assert not (src.parent / f"{src.name}-sweep-log").exists()
+
+
+def test_cli_sweep_json_output(tmp_path: Path, capsys):
+    src = tmp_path / "photos"
+    src.mkdir()
+    (src / "Thumbs.db").write_text("cache")
+
+    rc = main(["sweep", str(src), "--junk", "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["command"] == "sweep"
+    assert payload["mode"] == "delete"
+    assert payload["files_swept"] == 1
+    assert payload["entries"][0]["action"] == "deleted"
+
+
 def test_cli_find_similar_report_only(similar_tree: Path, tmp_path: Path):
     report = tmp_path / "r.html"
     rc = main(
