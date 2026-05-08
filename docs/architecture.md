@@ -29,7 +29,8 @@ src/dedupe/
 ├── restore.py          manifest replay with conflict detection
 ├── similar.py          perceptual hash, grouping, HTML report
 ├── convert.py          image format conversion (originals untouched)
-└── info.py             read-only folder stats / breakdown (no mutation)
+├── info.py             read-only folder stats / breakdown (no mutation)
+└── sweep.py            clear out non-photo content (currently: junk-file mode)
 ```
 
 Rules of thumb:
@@ -39,16 +40,20 @@ Rules of thumb:
 - `similar.py` and `convert.py` are the modules that import Pillow /
   imagehash / pillow-heif. `cli.py` defers their imports lazily so
   `dedupe scan` doesn't load the imaging stack.
-- `scan.py`, `restore.py`, `similar.py`, and `convert.py` each expose a
-  single `run_*` entry point. CLI handlers in `cli.py` build the options
-  dataclass and call it.
-- Filesystem mutation is confined to `_move_one()` in `scan.py`, the
-  `shutil.move(...)` call in `restore.py`, and the `Image.save(...)` call
-  in `convert.py` (writing to a *new* output file only). There are no
-  `unlink`, `rmtree`,
-  or `os.remove` calls anywhere. This is enforced by code review, not by a
-  linter — if you find yourself reaching for one, stop and check
-  `CLAUDE.md` "Safety Invariants."
+- `scan.py`, `restore.py`, `similar.py`, `convert.py`, `info.py`, and
+  `sweep.py` each expose a single `run_*` entry point. CLI handlers in
+  `cli.py` build the options dataclass and call it.
+- Filesystem mutation is confined to: `_move_one()` in `scan.py`, the
+  `shutil.move(...)` calls in `restore.py` and `convert.py` (the latter
+  during `--archive-originals`), the `Image.save(...)` call in
+  `convert.py` (writing to a *new* output file only), and the
+  `path.unlink()` call in `sweep.py` (only when `--junk` is set, only on
+  the hardcoded `JUNK_FILES` allowlist).
+- **The `unlink()` in `sweep.py` is the only deletion path in the tool.**
+  It exists as a deliberate, narrow exception to the "never delete"
+  invariant — see `CLAUDE.md` "Safety Invariants" and the "Data flow —
+  `dedupe sweep`" section below for the reasoning. `os.remove`,
+  `shutil.rmtree`, and `Path.rmdir` are not used anywhere.
 
 ## Data flow — `dedupe scan <folder>`
 
@@ -162,6 +167,63 @@ moves or deletes anything. Reuses `_is_hidden` and `_matches_exclude`
 from `scan.py` so the eligibility filter behaves identically across
 commands. Counts non-image files too (which `iter_image_files` would
 skip), so it doubles as a "what's actually in this folder?" tool.
+
+## Data flow — `dedupe sweep <folder> --junk`
+
+```
+folder
+  │
+  ▼
+walk source                 opts.source.rglob('*') if recursive else iterdir()
+                            (does NOT apply hidden-file filter — `.DS_Store`
+                            is hidden BY NAME and is what we're looking for)
+  │
+  ▼
+filter                      symlink rule, regular-file check, _matches_exclude()
+  │  list[Path]
+  ▼
+narrow by JUNK_FILES        keep only files whose basename is in the allowlist
+                            {Thumbs.db, .DS_Store, desktop.ini, .AppleDouble}
+  │  list[Path]
+  ▼
+mode-dispatch               --quarantine-junk?
+  │                            ├─ no (default)  → delete + log
+  │                            └─ yes           → move to mirrored quarantine
+  ▼
+for each junk file:
+  if quarantine_junk:
+    mirror destination      <source>/foo/Thumbs.db → <quarantine>/foo/Thumbs.db
+    refuse to overwrite     existing dest? error and continue
+    shutil.move(...)
+    SweepEntry(action=moved, new_path=...)
+  else:
+    path.unlink()           the deliberate exception to "never delete"
+    SweepEntry(action=deleted, new_path=None)
+  manifest_writer.add(entry)  atomic per-entry flush
+  │
+  ▼
+SweepResult                 files_scanned, files_swept, bytes_swept,
+                            errors, entries
+```
+
+`sweep --junk` is the **first and only** place in the tool where deletion
+is the default action. The exception is narrowly scoped:
+
+- **Hardcoded allowlist.** `JUNK_FILES = {Thumbs.db, .DS_Store, desktop.ini, .AppleDouble}`. Adding entries requires a PR with justification.
+- **Opt-in.** `dedupe sweep <folder>` with no flags is a no-op — the user must explicitly pass `--junk`.
+- **Logged.** Every deletion is recorded in `<folder>-sweep-log/sweep-manifest.json` with the original path, size, and timestamp. SHA-256 is omitted for deletion entries (the bytes are gone; hash is moot).
+- **Override available.** `--quarantine-junk` flips back to the safer "move to mirrored quarantine" pattern that everything else in the tool uses.
+
+For #31 (non-image user content) and #32 (videos), the default will remain `move to quarantine, never delete` — those handle real user files, not OS-managed metadata.
+
+### Why a separate walker
+
+`sweep` reuses `_matches_exclude` from `scan.py` but does **not** call
+`iter_image_files` because that walker pre-filters out hidden files
+(`.DS_Store` starts with `.`) and non-image extensions. Both filters
+would skip exactly the files `sweep --junk` is trying to find. The
+sweep walker is its own short function (`_iter_candidate_files`) that
+applies only the symlink, regular-file, and exclude-pattern filters.
 
 ## Data flow — `dedupe convert <folder>`
 

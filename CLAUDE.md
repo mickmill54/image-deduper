@@ -132,9 +132,16 @@ All Python code follows SOLID:
 
 These are non-negotiable for this tool:
 
-- **Never delete files.** `scan` only ever *moves* duplicates to the dups
-  folder. `restore` only ever *moves* them back. There is no `rm`, no
-  `Path.unlink`, no `shutil.rmtree` on user data.
+- **Never delete files** *— with one narrow, scoped exception.*
+  `scan`, `restore`, and `convert` only ever *move* files. `sweep --junk`
+  is the **only** code path that calls `Path.unlink()`, and it does so
+  only on a hardcoded allowlist of well-known auto-regenerated OS
+  metadata filenames (`Thumbs.db`, `.DS_Store`, `desktop.ini`,
+  `.AppleDouble`). Every deletion is recorded in a sweep manifest with
+  path, size, and timestamp. `--quarantine-junk` flips back to the
+  default move-don't-delete shape. **No other deletion is permitted
+  anywhere in the tool.** No `os.remove`, no `shutil.rmtree`, no
+  `Path.rmdir` on user data ever.
 - **Manifest is the source of truth.** Every move is recorded before or
   immediately after it happens. A crash mid-scan must leave a usable manifest.
 - **Refuse to overwrite.** `restore` skips and reports any file whose original
