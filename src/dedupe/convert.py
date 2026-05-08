@@ -57,6 +57,34 @@ ARCHIVE_MANIFEST_NAME = "archive-manifest.json"
 ARCHIVE_MANIFEST_VERSION = 1
 
 
+# --- conflict-resolution modes (#47) ----------------------------------------
+#
+# When `--in-place` writes a converted JPG and the destination already
+# exists (typical for iPhone libraries where the camera exports both
+# IMG_001.heic AND IMG_001.jpg for the same shot), `--on-conflict`
+# decides what to do.
+
+ON_CONFLICT_SKIP = "skip"  # default: refuse to overwrite, leave source HEIC alone
+ON_CONFLICT_KEEP_EXISTING = "archive-anyway"  # don't write JPG; archive HEIC anyway
+ON_CONFLICT_NUMBER = "number"  # write IMG_001-1.jpg, IMG_001-2.jpg, ...
+ON_CONFLICT_OVERWRITE = "overwrite"  # replace existing JPG (HEIC archived)
+
+ON_CONFLICT_MODES = frozenset(
+    {
+        ON_CONFLICT_SKIP,
+        ON_CONFLICT_KEEP_EXISTING,
+        ON_CONFLICT_NUMBER,
+        ON_CONFLICT_OVERWRITE,
+    }
+)
+
+# Per-file outcome strings recorded in ConvertResult counters.
+OUTCOME_CONVERTED = "converted"
+OUTCOME_KEPT_EXISTING = "kept_existing"
+OUTCOME_NUMBERED = "numbered"
+OUTCOME_OVERWRITTEN = "overwritten"
+
+
 @dataclass(frozen=True)
 class ConvertOptions:
     source: Path
@@ -72,6 +100,7 @@ class ConvertOptions:
     archive_originals: bool = False
     archive_folder: Path | None = None
     exclude_patterns: tuple[str, ...] = ()
+    on_conflict: str = ON_CONFLICT_SKIP
 
 
 @dataclass(frozen=True)
@@ -86,10 +115,16 @@ class ArchiveEntry:
 @dataclass
 class ConvertResult:
     files_scanned: int = 0
-    files_converted: int = 0
-    files_skipped: int = 0
+    files_converted: int = 0  # new bytes written (fresh convert OR overwrite OR numbered)
+    files_skipped: int = 0  # SKIP mode: conflict left HEIC in place, no archive
     bytes_written: int = 0
     files_archived: int = 0
+    # Per-mode outcome counts (#47). Sum equals files_converted +
+    # files_kept_existing for the rows where the convert/keep was the
+    # final action (errors don't contribute).
+    files_kept_existing: int = 0  # archive-anyway: existing JPG kept, HEIC archived
+    files_numbered: int = 0  # number: wrote IMG-1.jpg etc.
+    files_overwritten: int = 0  # overwrite: replaced existing JPG
     errors: list[str] = field(default_factory=list)
     conversions: list[tuple[Path, Path]] = field(default_factory=list)
     archive_entries: list[ArchiveEntry] = field(default_factory=list)
@@ -143,20 +178,46 @@ def _archive_destination(original: Path, source: Path, archive_folder: Path) -> 
     return archive_folder / rel_path
 
 
-def _convert_one(
+def _verb_for(outcome: str, *, dry_run: bool) -> str:
+    """User-friendly verb for the per-file output line."""
+    if outcome == OUTCOME_KEPT_EXISTING:
+        return "would keep existing" if dry_run else "kept existing JPG"
+    if outcome == OUTCOME_NUMBERED:
+        return "would write numbered" if dry_run else "wrote numbered"
+    if outcome == OUTCOME_OVERWRITTEN:
+        return "would overwrite" if dry_run else "overwrote"
+    return "would convert" if dry_run else "converted"
+
+
+def _find_numbered_destination(dest: Path) -> Path:
+    """Find the lowest-N suffix path that doesn't exist yet.
+
+    ``IMG_001.jpg`` already taken → tries ``IMG_001-1.jpg``,
+    ``IMG_001-2.jpg``, etc. Same convention macOS Finder uses for
+    copy-on-conflict. Race-prone in concurrent threads (two workers
+    could pick the same suffix), but the only way that happens is if
+    the source has multiple files mapping to the same dest stem,
+    which is rare; the second writer would hit a real "destination
+    exists" error and fall through to the regular error path.
+    """
+    if not dest.exists():
+        return dest
+    n = 1
+    while True:
+        candidate = dest.with_stem(f"{dest.stem}-{n}")
+        if not candidate.exists():
+            return candidate
+        n += 1
+
+
+def _write_image(
     *,
     src: Path,
     dest: Path,
     pillow_format: str,
     quality: int,
-    dry_run: bool,
 ) -> int:
-    """Convert one file. Returns bytes written (0 in dry-run)."""
-    if dest.exists():
-        raise FileExistsError(f"output already exists: {dest}")
-    if dry_run:
-        return 0
-
+    """Open `src`, convert, save to `dest`. Returns bytes written."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     save_kwargs: dict[str, object] = {}
     if pillow_format == "JPEG":
@@ -176,7 +237,63 @@ def _convert_one(
     return dest.stat().st_size
 
 
-def run_convert(opts: ConvertOptions, ui: UI) -> ConvertResult:
+def _convert_one(  # noqa: PLR0911 — linear conflict-mode dispatch branches
+    *,
+    src: Path,
+    dest: Path,
+    pillow_format: str,
+    quality: int,
+    dry_run: bool,
+    on_conflict: str = ON_CONFLICT_SKIP,
+) -> tuple[int, str, Path]:
+    """Convert one file with conflict resolution per ``on_conflict`` (#47).
+
+    Returns ``(bytes_written, outcome, actual_dest)``:
+      - ``bytes_written``: 0 in dry-run, 0 on archive-anyway (no new write),
+        otherwise the size of the new JPG.
+      - ``outcome``: one of ``OUTCOME_CONVERTED``, ``OUTCOME_KEPT_EXISTING``,
+        ``OUTCOME_NUMBERED``, ``OUTCOME_OVERWRITTEN``.
+      - ``actual_dest``: the path that was actually written (or skipped).
+        For ``number`` this is the suffixed variant; for the others it's
+        the original ``dest``.
+
+    On ``skip`` mode (the default), if ``dest`` already exists we raise
+    ``FileExistsError`` — preserves the v0.12.x behavior for backward
+    compat.
+    """
+    if dest.exists():
+        if on_conflict == ON_CONFLICT_SKIP:
+            raise FileExistsError(f"output already exists: {dest}")
+        if on_conflict == ON_CONFLICT_KEEP_EXISTING:
+            # archive-anyway: don't write a new JPG. The original HEIC
+            # will still flow to the archive pass via result.conversions
+            # (the existing JPG is canonical for this photo).
+            return 0, OUTCOME_KEPT_EXISTING, dest
+        if on_conflict == ON_CONFLICT_NUMBER:
+            actual_dest = _find_numbered_destination(dest)
+            if dry_run:
+                return 0, OUTCOME_NUMBERED, actual_dest
+            size = _write_image(
+                src=src, dest=actual_dest, pillow_format=pillow_format, quality=quality
+            )
+            return size, OUTCOME_NUMBERED, actual_dest
+        if on_conflict == ON_CONFLICT_OVERWRITE:
+            if dry_run:
+                return 0, OUTCOME_OVERWRITTEN, dest
+            size = _write_image(src=src, dest=dest, pillow_format=pillow_format, quality=quality)
+            return size, OUTCOME_OVERWRITTEN, dest
+        # Defensive: unknown mode → fall through to a clear error.
+        raise ValueError(f"unknown on_conflict mode: {on_conflict!r}")
+
+    # Happy path: destination doesn't exist; behaves identically across
+    # all modes (no conflict to resolve).
+    if dry_run:
+        return 0, OUTCOME_CONVERTED, dest
+    size = _write_image(src=src, dest=dest, pillow_format=pillow_format, quality=quality)
+    return size, OUTCOME_CONVERTED, dest
+
+
+def run_convert(opts: ConvertOptions, ui: UI) -> ConvertResult:  # noqa: PLR0912, PLR0915 — orchestrator with linear per-outcome branches
     """Walk the source folder and convert every eligible file."""
     if not opts.source.exists():
         raise FileNotFoundError(f"source folder does not exist: {opts.source}")
@@ -229,14 +346,17 @@ def run_convert(opts: ConvertOptions, ui: UI) -> ConvertResult:
                 pillow_format=pillow_format,
                 quality=opts.quality,
                 dry_run=opts.dry_run,
+                on_conflict=opts.on_conflict,
             ): (src, dest)
             for src, dest in planned
         }
         for fut in as_completed(future_to_pair):
             src, dest = future_to_pair[fut]
             try:
-                size = fut.result()
+                size, outcome, actual_dest = fut.result()
             except FileExistsError as exc:
+                # Only reachable in SKIP mode (the other modes resolve
+                # the conflict and don't raise).
                 result.errors.append(f"refusing to overwrite: {exc}")
                 ui.error(result.errors[-1])
                 result.files_skipped += 1
@@ -248,14 +368,32 @@ def run_convert(opts: ConvertOptions, ui: UI) -> ConvertResult:
                 progress.advance(current=src.name)
                 continue
 
-            result.files_converted += 1
-            result.bytes_written += size
-            result.conversions.append((src, dest))
-            verb = "would convert" if opts.dry_run else "converted"
+            # Per-mode bookkeeping. archive-anyway is the only outcome
+            # that didn't write new bytes; everything else counts as a
+            # successful conversion-with-archive.
+            if outcome == OUTCOME_KEPT_EXISTING:
+                result.files_kept_existing += 1
+                # bytes_written stays at 0 (no new file written).
+            else:
+                result.files_converted += 1
+                result.bytes_written += size
+                if outcome == OUTCOME_NUMBERED:
+                    result.files_numbered += 1
+                elif outcome == OUTCOME_OVERWRITTEN:
+                    result.files_overwritten += 1
+
+            # Both convert-write and archive-anyway flow into the archive
+            # pass: the original HEIC moves to the archive folder either
+            # way, so the user sees a HEIC-free source. The actual_dest
+            # reported is the path the JPG ended up at (or the existing
+            # JPG path for archive-anyway).
+            result.conversions.append((src, actual_dest))
+
+            verb = _verb_for(outcome, dry_run=opts.dry_run)
             ui.info(
                 f"  [dim]→[/dim] {verb} "
                 f"[yellow]{rel(src, opts.source)}[/yellow] → "
-                f"[green]{rel(dest, opts.output_folder)}[/green]"
+                f"[green]{rel(actual_dest, opts.output_folder)}[/green]"
             )
             progress.advance(current=src.name)
 

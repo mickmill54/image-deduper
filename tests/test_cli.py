@@ -207,6 +207,104 @@ def test_cli_convert_from_any_conflicts_with_source_ext(convert_tree: Path):
     assert rc == 2  # EXIT_USAGE
 
 
+def test_cli_convert_on_conflict_archive_anyway_end_to_end(tmp_path: Path):
+    """End-to-end: --on-conflict archive-anyway via the CLI moves the
+    source HEIC out of the way without writing a new JPG when the JPG
+    already exists. Mick's iPhone HEIC+JPG-pair use case (#47)."""
+    from PIL import Image  # noqa: PLC0415
+
+    src = tmp_path / "iPhone"
+    src.mkdir()
+    Image.new("RGB", (4, 4), (255, 0, 0)).save(src / "IMG_001.jpg", "JPEG")
+    Image.new("RGB", (4, 4), (200, 100, 100)).save(src / "IMG_001.heic", "PNG")  # mock HEIC bytes
+
+    rc = main(
+        [
+            "convert",
+            str(src),
+            "--in-place",
+            "--source-ext",
+            "heic",
+            "--to",
+            "jpeg",
+            "--on-conflict",
+            "archive-anyway",
+            "--quiet",
+        ]
+    )
+    assert rc == 0
+    # JPG untouched
+    assert (src / "IMG_001.jpg").is_file()
+    # HEIC archived (in-place archives default to <src>-heic)
+    archive = tmp_path / f"{src.name}-heic"
+    assert (archive / "IMG_001.heic").is_file()
+    assert not (src / "IMG_001.heic").exists()
+
+
+def test_cli_convert_on_conflict_number_writes_suffixed(tmp_path: Path):
+    from PIL import Image  # noqa: PLC0415
+
+    src = tmp_path / "in"
+    out = tmp_path / "out"
+    src.mkdir()
+    out.mkdir()
+    Image.new("RGB", (4, 4), (10, 20, 30)).save(src / "a.jpg", "JPEG")
+    (out / "a.png").write_bytes(b"\x89PNG\r\n\x1a\n-existing")
+
+    rc = main(
+        [
+            "convert",
+            str(src),
+            "--output-folder",
+            str(out),
+            "--source-ext",
+            "jpg",
+            "--to",
+            "png",
+            "--on-conflict",
+            "number",
+            "--quiet",
+        ]
+    )
+    assert rc == 0
+    assert (out / "a.png").read_bytes() == b"\x89PNG\r\n\x1a\n-existing"
+    assert (out / "a-1.png").is_file()
+    assert (out / "a-1.png").read_bytes().startswith(b"\x89PNG")
+
+
+def test_cli_convert_on_conflict_in_json_output(tmp_path: Path, capsys):
+    from PIL import Image  # noqa: PLC0415
+
+    src = tmp_path / "in"
+    out = tmp_path / "out"
+    src.mkdir()
+    out.mkdir()
+    Image.new("RGB", (4, 4), (10, 20, 30)).save(src / "a.jpg", "JPEG")
+    (out / "a.png").write_bytes(b"\x89PNG\r\n\x1a\n-existing")
+
+    rc = main(
+        [
+            "convert",
+            str(src),
+            "--output-folder",
+            str(out),
+            "--source-ext",
+            "jpg",
+            "--to",
+            "png",
+            "--on-conflict",
+            "number",
+            "--json",
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["on_conflict"] == "number"
+    assert payload["files_numbered"] == 1
+    assert payload["files_kept_existing"] == 0
+    assert payload["files_overwritten"] == 0
+
+
 def test_cli_convert_source_ext_comma_list(convert_tree: Path, tmp_path: Path):
     """--source-ext png,bmp == --source-ext png --source-ext bmp."""
     out = tmp_path / "out"
