@@ -117,26 +117,46 @@ Failure modes and what they map to:
 | Bad CLI usage | argparse default → exit code 2 |
 | Clean run, no errors | exit code 0 |
 
-## Data flow — `dedupe restore <dups-folder>`
+## Data flow — `dedupe restore <folder>`
 
 ```
-dups-folder
+folder
   │
   ▼
-manifest.load()            reads manifest.json, validates version
+detect manifest filename:
+  manifest.json       → scan path
+  sweep-manifest.json → sweep path
+  both present        → ValueError (refuse to silently pick)
+  neither             → FileNotFoundError
   │
   ▼
-for each entry:
-  if not entry.new_path.exists():    → error (missing in dups)
-  elif entry.original_path.exists(): → conflict, skipped
-  else:                              → shutil.move(new → original)
+┌─ scan path ──────────────────┐    ┌─ sweep path ────────────────────────┐
+│ manifest_mod.load(.json)     │    │ _load_sweep_manifest(.json)         │
+│   validates schema/version   │    │   raw dict; version=1 enforced      │
+│ for each entry:              │    │ for each entry:                     │
+│   move new_path → original   │    │   action="moved":  reverse the move │
+│   refuse-to-overwrite        │    │   action="deleted": count, no-op    │
+│                              │    │   refuse-to-overwrite               │
+└──────────────────────────────┘    └─────────────────────────────────────┘
   │
   ▼
-RestoreResult              files_restored, files_skipped, conflicts, errors
+RestoreResult              manifest_kind, files_restored, files_skipped,
+                           deleted_entries, conflicts, errors
 ```
 
-Conflict policy: **always skip, never overwrite.** This is the
-reverse-direction analog of the "refuse to overwrite" rule in `scan`.
+Conflict policy: **always skip, never overwrite.** Same contract on
+both paths — the reverse-direction analog of the "refuse to overwrite"
+rule in `scan` and `sweep`.
+
+Deleted-entry policy (sweep only): junk-mode entries with `action="deleted"`
+are counted into `RestoreResult.deleted_entries` but never recreated.
+The deletes target auto-regenerated OS metadata (`.DS_Store`, `Thumbs.db`,
+`desktop.ini`, `.AppleDouble`); the OS reproduces them on the next
+folder browse. Reporting beats fabricating.
+
+The two loaders are deliberately separate (`manifest.load` for scan,
+a private `_load_sweep_manifest` for sweep) so a schema bump on one
+side never silently breaks the other.
 
 ## Data flow — `dedupe find-similar <folder>`
 

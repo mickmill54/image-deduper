@@ -8,6 +8,50 @@ Version bumps follow the conventional-commits convention described in `CLAUDE.md
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/mickmill54/image-deduper/releases/tag/v0.11.0) — 2026-05-07
+
+`dedupe restore <folder>` now handles sweep manifests too, not just
+scan dups. Closes #42.
+
+### Added
+
+- **`dedupe restore <sweep-output-folder>`** auto-detects the manifest
+  type and reverses the operation:
+  - `sweep --videos` quarantine → every video back at its original
+    path. Uses the suffixed-subdirectory layout from v0.10.0.
+  - `sweep --non-images` quarantine → every non-image back at its
+    original path.
+  - `sweep --quarantine-junk` quarantine → every junk file back at its
+    original path.
+  - `sweep --junk` audit log (delete mode) → counts the deletions and
+    exits cleanly. Junk files are intentionally one-way (auto-regenerated
+    OS metadata like `.DS_Store` / `Thumbs.db`); restore reports them as
+    `deleted_entries` in the JSON output and the human-readable summary.
+- New `RestoreResult.deleted_entries` and `manifest_kind` fields. JSON
+  output gains a `manifest_kind` key (`"scan"` or `"sweep"`).
+
+### Changed
+
+- `dedupe restore --help` now describes both manifest types and what
+  happens for each (`manifest.json` vs `sweep-manifest.json`).
+- The `<folder>` positional argument is resolved to absolute (mirrors
+  the v0.10.1 fix in #43) so `dedupe restore .` behaves predictably.
+
+### Notes
+
+- Refuse-to-overwrite contract is preserved across both manifest
+  types: if the original path is occupied at restore time, the entry
+  is reported as a conflict and skipped, never overwritten.
+- A folder containing **both** `manifest.json` and `sweep-manifest.json`
+  is rejected with a clear error rather than silently picking one
+  (defensive — should never occur in normal use, since each subcommand
+  owns its own destination folder).
+- Future-version sweep manifests fail loudly with
+  `"unsupported sweep manifest version: <N>"` rather than silently
+  skipping entries the loader doesn't understand.
+- Fixes the v0.9.x → v0.10.0 follow-up that previously required a
+  hand-rolled Python script to undo a sweep run.
+
 ## [0.10.1](https://github.com/mickmill54/image-deduper/releases/tag/v0.10.1) — 2026-05-07
 
 Bug fix: `dedupe scan .`, `dedupe sweep .`, and `dedupe convert .` no
