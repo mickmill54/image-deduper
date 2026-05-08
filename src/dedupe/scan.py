@@ -18,7 +18,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import shutil
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -26,6 +26,13 @@ from pathlib import Path
 
 from dedupe.manifest import MANIFEST_NAME, ManifestEntry, ManifestWriter
 from dedupe.ui import UI
+from dedupe.walk import (
+    WalkOptions,
+    is_hidden,
+    matches_exclude,
+    rel,
+    walk_files,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -67,64 +74,28 @@ def hash_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def _is_hidden(path: Path, source: Path) -> bool:
-    """A path is hidden if any component (relative to source) starts with '.'."""
-    try:
-        rel = path.relative_to(source)
-    except ValueError:
-        rel = path
-    return any(part.startswith(".") for part in rel.parts)
-
-
-def _matches_exclude(path: Path, source: Path, patterns: tuple[str, ...]) -> bool:
-    """True if `path` matches any glob in `patterns` (relative to source).
-
-    Each pattern is matched twice: once against the relative path
-    (e.g. "exports/img.jpg") and once against the basename (e.g. "img.jpg").
-    Either match excludes the file. Uses fnmatch semantics, which matches
-    most users' intuition for shell-style globs (`*.tmp`, `exports/*`,
-    `**/.DS_Store`).
-    """
-    if not patterns:
-        return False
-    import fnmatch  # noqa: PLC0415 — keep stdlib usage local
-
-    try:
-        rel = str(path.relative_to(source))
-    except ValueError:
-        rel = str(path)
-    name = path.name
-    return any(fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(name, pat) for pat in patterns)
+# Backwards-compat shims for legacy imports. The shared implementations
+# now live in `dedupe.walk`. Tests still import these names directly
+# from `dedupe.scan`, so we keep the names here as thin re-exports.
+_is_hidden = is_hidden
+_matches_exclude = matches_exclude
+_rel = rel
 
 
 def iter_image_files(opts: ScanOptions) -> Iterator[Path]:
-    """Yield candidate image paths under opts.source."""
-    if not opts.source.exists():
-        return
-    if not opts.source.is_dir():
-        return
+    """Yield candidate image paths under opts.source.
 
-    if opts.recursive:
-        walker: Iterable[Path] = opts.source.rglob("*")
-    else:
-        walker = opts.source.iterdir()
-
-    for path in walker:
-        try:
-            if path.is_symlink() and not opts.follow_symlinks:
-                continue
-            if not path.is_file():
-                continue
-            if path.suffix.lower() not in IMAGE_EXTENSIONS:
-                continue
-            if not opts.include_hidden and _is_hidden(path, opts.source):
-                continue
-            if _matches_exclude(path, opts.source, opts.exclude_patterns):
-                continue
-        except OSError as exc:
-            logger.warning("skipping %s: %s", path, exc)
-            continue
-        yield path
+    Thin wrapper over `walk.walk_files` that adds the IMAGE_EXTENSIONS
+    filter as the subcommand-specific predicate.
+    """
+    walk_opts = WalkOptions(
+        source=opts.source,
+        recursive=opts.recursive,
+        follow_symlinks=opts.follow_symlinks,
+        include_hidden=opts.include_hidden,
+        exclude_patterns=opts.exclude_patterns,
+    )
+    yield from walk_files(walk_opts, predicate=lambda p: p.suffix.lower() in IMAGE_EXTENSIONS)
 
 
 def pick_keeper(paths: list[Path]) -> Path:
@@ -134,16 +105,8 @@ def pick_keeper(paths: list[Path]) -> Path:
 
 def _mirror_destination(original: Path, source: Path, dups_folder: Path) -> Path:
     """Map source/foo/bar.jpg -> dups_folder/foo/bar.jpg."""
-    rel = original.resolve().relative_to(source.resolve())
-    return dups_folder / rel
-
-
-def _rel(path: Path, source: Path) -> str:
-    """Render `path` relative to `source` for log output. Falls back to absolute."""
-    try:
-        return str(path.resolve().relative_to(source.resolve()))
-    except ValueError:
-        return str(path)
+    rel_path = original.resolve().relative_to(source.resolve())
+    return dups_folder / rel_path
 
 
 def _hash_all(files: list[Path], threads: int, ui: UI) -> tuple[dict[str, list[Path]], list[str]]:

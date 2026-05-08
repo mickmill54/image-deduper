@@ -22,13 +22,13 @@ import json
 import logging
 import shutil
 import threading
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from dedupe.scan import _matches_exclude
 from dedupe.ui import UI
+from dedupe.walk import WalkOptions, rel, walk_files
 
 logger = logging.getLogger(__name__)
 
@@ -133,43 +133,25 @@ def is_junk_file(path: Path) -> bool:
 def _iter_candidate_files(opts: SweepOptions) -> Iterator[Path]:
     """Walk the source tree and yield every regular file matching opts.
 
-    Unlike `iter_image_files` in scan.py, this walker does NOT pre-filter
-    by extension or hidden status — junk files like `.DS_Store` are
-    hidden by name, so applying scan's hidden-file filter here would skip
-    exactly what we're trying to find. The `--junk` mode then narrows by
-    the JUNK_FILES allowlist; future modes will narrow by their own
-    criteria.
+    Calls `walk.walk_files` with `include_hidden=True` because junk files
+    like `.DS_Store` are hidden by name — the default hidden-file filter
+    would skip exactly what we're trying to find. No predicate; the
+    `--junk` mode narrows by `JUNK_FILES` afterwards.
     """
-    if not opts.source.exists() or not opts.source.is_dir():
-        return
-
-    walker: Iterable[Path] = opts.source.rglob("*") if opts.recursive else opts.source.iterdir()
-
-    for path in walker:
-        try:
-            if path.is_symlink() and not opts.follow_symlinks:
-                continue
-            if not path.is_file():
-                continue
-            if _matches_exclude(path, opts.source, opts.exclude_patterns):
-                continue
-        except OSError as exc:
-            logger.warning("skipping %s: %s", path, exc)
-            continue
-        yield path
+    walk_opts = WalkOptions(
+        source=opts.source,
+        recursive=opts.recursive,
+        follow_symlinks=opts.follow_symlinks,
+        include_hidden=True,
+        exclude_patterns=opts.exclude_patterns,
+    )
+    yield from walk_files(walk_opts)
 
 
 def _quarantine_destination(original: Path, source: Path, quarantine_folder: Path) -> Path:
     """source/foo/Thumbs.db -> quarantine/foo/Thumbs.db (mirrored layout)."""
-    rel = original.resolve().relative_to(source.resolve())
-    return quarantine_folder / rel
-
-
-def _rel(path: Path, base: Path) -> str:
-    try:
-        return str(path.resolve().relative_to(base.resolve()))
-    except ValueError:
-        return str(path)
+    rel_path = original.resolve().relative_to(source.resolve())
+    return quarantine_folder / rel_path
 
 
 def run_sweep(opts: SweepOptions, ui: UI) -> SweepResult:  # noqa: PLR0912, PLR0915 — orchestrator with linear failure-mode branches
@@ -263,8 +245,8 @@ def run_sweep(opts: SweepOptions, ui: UI) -> SweepResult:  # noqa: PLR0912, PLR0
             verb = "would move" if opts.dry_run else "moved"
             ui.info(
                 f"  [dim]→[/dim] {verb} "
-                f"[yellow]{_rel(path, opts.source)}[/yellow] → "
-                f"[green]{_rel(dest, quarantine_folder)}[/green] (in junk)"
+                f"[yellow]{rel(path, opts.source)}[/yellow] → "
+                f"[green]{rel(dest, quarantine_folder)}[/green] (in junk)"
             )
             if not opts.dry_run:
                 try:
@@ -285,7 +267,7 @@ def run_sweep(opts: SweepOptions, ui: UI) -> SweepResult:  # noqa: PLR0912, PLR0
             verb = "would delete" if opts.dry_run else "deleted"
             ui.info(
                 f"  [dim]→[/dim] {verb} "
-                f"[yellow]{_rel(path, opts.source)}[/yellow] "
+                f"[yellow]{rel(path, opts.source)}[/yellow] "
                 f"({size} bytes)"
             )
             if not opts.dry_run:

@@ -30,6 +30,7 @@ from PIL import Image
 
 from dedupe.scan import ScanOptions, iter_image_files
 from dedupe.ui import UI
+from dedupe.walk import rel
 
 logger = logging.getLogger(__name__)
 
@@ -153,21 +154,14 @@ def _scan_options_for(opts: ConvertOptions) -> ScanOptions:
 
 def _mirror_destination(original: Path, source: Path, output_folder: Path, target_ext: str) -> Path:
     """source/foo/x.heic -> output_folder/foo/x.jpg (extension swap)."""
-    rel = original.resolve().relative_to(source.resolve())
-    return (output_folder / rel).with_suffix(target_ext)
+    rel_path = original.resolve().relative_to(source.resolve())
+    return (output_folder / rel_path).with_suffix(target_ext)
 
 
 def _archive_destination(original: Path, source: Path, archive_folder: Path) -> Path:
     """source/foo/x.heic -> archive_folder/foo/x.heic (extension preserved)."""
-    rel = original.resolve().relative_to(source.resolve())
-    return archive_folder / rel
-
-
-def _rel(path: Path, base: Path) -> str:
-    try:
-        return str(path.resolve().relative_to(base.resolve()))
-    except ValueError:
-        return str(path)
+    rel_path = original.resolve().relative_to(source.resolve())
+    return archive_folder / rel_path
 
 
 def _convert_one(
@@ -281,8 +275,8 @@ def run_convert(opts: ConvertOptions, ui: UI) -> ConvertResult:
             verb = "would convert" if opts.dry_run else "converted"
             ui.info(
                 f"  [dim]→[/dim] {verb} "
-                f"[yellow]{_rel(src, opts.source)}[/yellow] → "
-                f"[green]{_rel(dest, opts.output_folder)}[/green]"
+                f"[yellow]{rel(src, opts.source)}[/yellow] → "
+                f"[green]{rel(dest, opts.output_folder)}[/green]"
             )
             progress.advance(current=src.name)
 
@@ -315,8 +309,8 @@ def _archive_originals_pass(opts: ConvertOptions, result: ConvertResult, ui: UI)
             archive_dest = _archive_destination(src, opts.source, archive_folder)
             ui.info(
                 f"  [dim]→[/dim] would move "
-                f"[yellow]{_rel(src, opts.source)}[/yellow] → "
-                f"[green]{_rel(archive_dest, archive_folder)}[/green] (in archive)"
+                f"[yellow]{rel(src, opts.source)}[/yellow] → "
+                f"[green]{rel(archive_dest, archive_folder)}[/green] (in archive)"
             )
         return
 
@@ -365,6 +359,4 @@ def _archive_originals_pass(opts: ConvertOptions, result: ConvertResult, ui: UI)
         manifest.add(entry)
         result.archive_entries.append(entry)
         result.files_archived += 1
-        ui.detail(
-            f"    archived {_rel(src, opts.source)} → " f"{_rel(archive_dest, archive_folder)}"
-        )
+        ui.detail(f"    archived {rel(src, opts.source)} → " f"{rel(archive_dest, archive_folder)}")
