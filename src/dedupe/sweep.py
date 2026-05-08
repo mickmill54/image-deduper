@@ -15,10 +15,12 @@ each with its own flag and destination:
                  "never delete" invariant applies.
 
   --videos       Video files (mov, mp4, m4v, avi, mkv, etc.). Always
-                 **moved** to `<folder> - MOV/` (matches the existing
-                 manual convention many users have for separating
-                 videos from a photo slideshow). User content; never
-                 deleted.
+                 **moved** to `<folder> - videos/`. Inside that wrapper,
+                 every mirrored subdirectory gains a ` - videos`
+                 suffix so paths are self-documenting when they leave
+                 their original context (e.g. `2008 - iPhone/`
+                 photos stay put while `2008 - iPhone - videos/` holds
+                 the moved videos). User content; never deleted.
 
 The flags can be combined. Each enabled category gets its own
 destination folder and its own `sweep-manifest.json` so restores are
@@ -70,9 +72,9 @@ JUNK_FILES = frozenset(
 # Video file extensions that `dedupe sweep --videos` will move out of
 # a photo folder. Conservative-but-thorough: covers >99% of consumer
 # video formats encountered in modern slideshow workflows. The action
-# is "move to <folder> - MOV", not "delete", so the safety cost of an
-# overzealous match is low; the cost of *missing* a video that breaks
-# slideshow software is real.
+# is "move to <folder> - videos", not "delete", so the safety cost of
+# an overzealous match is low; the cost of *missing* a video that
+# breaks slideshow software is real.
 #
 # INCLUDED (20 extensions, grouped by source):
 #
@@ -192,7 +194,7 @@ class SweepOptions:
 
     # Video-files category. Always moves; never deletes.
     sweep_videos: bool = False
-    videos_folder: Path | None = None  # default: "<source> - MOV"
+    videos_folder: Path | None = None  # default: "<source> - videos"
 
     dry_run: bool = False
     recursive: bool = True
@@ -318,9 +320,42 @@ def _default_destinations(opts: SweepOptions) -> dict[str, Path | None]:
         CATEGORY_VIDEOS: (
             opts.videos_folder
             if opts.videos_folder is not None
-            else src.parent / f"{src.name} - MOV"
+            else src.parent / f"{src.name} - videos"
         ),
     }
+
+
+# Suffix appended to every mirrored subdirectory under the videos
+# wrapper. Keeps each path segment self-documenting when files leave
+# their original context (e.g. someone copies `2008 - iPhone - videos/`
+# off to a backup drive — you don't lose the "these are videos" signal).
+VIDEOS_SUBDIR_SUFFIX = " - videos"
+
+
+def _videos_dest_for(rel_path: Path) -> Path:
+    """Translate a source-relative path into its videos-wrapper
+    destination by suffixing each parent-directory component with
+    ` - videos`. The basename (the file itself) is left untouched.
+
+    Examples:
+      ``trip.mov``  →  ``trip.mov``
+      ``2008 - iPhone/movie.mov``  →  ``2008 - iPhone - videos/movie.mov``
+      ``2009 - iPhone/archive/old.mov``  →
+        ``2009 - iPhone - videos/archive - videos/old.mov``
+
+    Idempotent against re-application: if a parent already ends in
+    ` - videos`, no extra suffix is added (cheap defense-in-depth in
+    case of unusual restore/replay flows).
+    """
+    parts = rel_path.parts
+    if len(parts) <= 1:
+        # Source-root file: no parent dirs to suffix.
+        return rel_path
+    suffixed_parents = tuple(
+        part if part.endswith(VIDEOS_SUBDIR_SUFFIX) else part + VIDEOS_SUBDIR_SUFFIX
+        for part in parts[:-1]
+    )
+    return Path(*suffixed_parents, parts[-1])
 
 
 def _enabled_categories(opts: SweepOptions) -> set[str]:
@@ -357,7 +392,7 @@ def _iter_candidate_files(opts: SweepOptions) -> list[Path]:
 # --- per-file execution -----------------------------------------------------
 
 
-def _process_one(  # noqa: PLR0912 — linear failure-mode branches per action
+def _process_one(  # noqa: PLR0912, PLR0915 — linear failure-mode branches per action
     plan: _CategoryPlan,
     src_path: Path,
     *,
@@ -404,7 +439,12 @@ def _process_one(  # noqa: PLR0912 — linear failure-mode branches per action
             result.errors.append(f"could not map path {src_path}: {exc}")
             ui.error(result.errors[-1])
             return
-        dest = plan.destination / rel_path
+        # Videos use suffixed-subdirectory layout for self-documenting
+        # paths; junk/non-images use a flat mirror of the source tree.
+        if plan.label == CATEGORY_VIDEOS:
+            dest = plan.destination / _videos_dest_for(rel_path)
+        else:
+            dest = plan.destination / rel_path
         if dest.exists():
             result.errors.append(f"refusing to overwrite: {dest}")
             ui.error(result.errors[-1])

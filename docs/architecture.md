@@ -203,7 +203,7 @@ skip), so it doubles as a "what's actually in this folder?" tool.
 | `--junk` | delete + log | `<folder>-sweep-log/sweep-manifest.json` (audit only) |
 | `--junk --quarantine-junk` | move to mirrored quarantine | `<folder>-junk/` |
 | `--non-images` | move (always) | `<folder>-non-images/` |
-| `--videos` | move (always) | `<folder> - MOV/` (matches manual convention) |
+| `--videos` | move (always) | `<folder> - videos/` (mirrored subdirs gain ` - videos` suffix) |
 
 ```
 folder
@@ -274,6 +274,44 @@ manifest, so a restore of one category is independent of the others.
 extensions — exactly the files `sweep` needs to find. Sweep instead
 calls `walk.walk_files` directly with `include_hidden=True` and no
 predicate, then narrows via `_classify()` per file.
+
+### Video destination layout (`<folder> - videos/`)
+
+`--videos` writes to a single sibling wrapper named `<source> - videos/`.
+Inside that wrapper, every mirrored subdirectory gains a ` - videos`
+suffix while the basename of each video file is left untouched. The
+result is a path that is self-documenting at every level:
+
+```
+Photos/                               Photos - videos/
+  2008 - iPhone/      ──┐               2008 - iPhone - videos/
+    movie.mov           │                 movie.mov
+  2009 - iPhone/        ▼                 …
+    archive/                            2009 - iPhone - videos/
+      old.mov                             archive - videos/
+  trip.mov                                  old.mov
+                                          trip.mov  ← root files keep their name
+```
+
+Why the redundant suffix at every level: when the wrapper or any of
+its subfolders is later moved, copied, or shared in isolation, the
+" - videos" tag travels with it. A folder named `2008 - iPhone - videos/`
+is unambiguously the video pull from `2008 - iPhone/` no matter where
+it ends up — there is no metadata file or path-context to lose. Source-
+root files (no parent directory under source) are placed directly under
+the wrapper because there is no parent name to suffix.
+
+The translation is implemented by `_videos_dest_for(rel_path)` in
+`sweep.py`. It is idempotent: re-applying it to a path whose parents
+already end in ` - videos` is a no-op, so a manifest replay or restore
+that re-walks the destination tree never accumulates double suffixes.
+
+This layout differs from `--junk` and `--non-images`, which mirror the
+source tree directly into their wrapper folder without per-segment
+renaming. Junk/non-images quarantines are typically transient (the
+user reviews and either restores or deletes), so the path remains
+attached to its wrapper. Videos are typically kept long-term, so the
+self-documenting path matters.
 
 ### Video format coverage (`VIDEO_EXTENSIONS`)
 

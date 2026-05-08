@@ -28,8 +28,8 @@ def register(sub: argparse._SubParsersAction) -> None:
             "  --non-images  Arbitrary non-image files (txt, pdf, docx, etc.). "
             "Always moved (never deleted) to <folder>-non-images.\n"
             "  --videos      Video files (mov, mp4, m4v, avi, mkv, etc.). "
-            "Always moved to '<folder> - MOV' (matches the manual convention "
-            "for separating videos from a photo slideshow)."
+            "Always moved to '<folder> - videos' (mirrored subfolders inside "
+            "gain a ' - videos' suffix so paths are self-documenting)."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -108,7 +108,7 @@ def register(sub: argparse._SubParsersAction) -> None:
         type=Path,
         default=None,
         metavar="PATH",
-        help="Where to move video files (default: '<folder> - MOV')",
+        help="Where to move video files (default: '<folder> - videos')",
     )
 
     # --- shared flags -------------------------------------------------------
@@ -180,7 +180,7 @@ def _emit_summary(result, opts, ui: UI) -> None:
             target = opts.non_images_folder or (src.parent / f"{src.name}-non-images")
             ui.success(f"  non-images:   {target}")
         if opts.sweep_videos and result.videos_swept:
-            target = opts.videos_folder or (src.parent / f"{src.name} - MOV")
+            target = opts.videos_folder or (src.parent / f"{src.name} - videos")
             ui.success(f"  videos:       {target}")
     if result.errors:
         ui.warn(f"completed with {len(result.errors)} error(s)")

@@ -8,6 +8,44 @@ Version bumps follow the conventional-commits convention described in `CLAUDE.md
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/mickmill54/image-deduper/releases/tag/v0.10.0) — 2026-05-07
+
+`dedupe sweep --videos` gets a redesigned destination layout. The old
+`<folder> - MOV/` wrapper had two problems flagged by Mick after using
+v0.9.1 on a multi-decade iPhone-photos library: (1) the literal `- MOV`
+folder name read as "strange" in Finder, and (2) when a single
+year-folder of moved videos was later detached from its wrapper, you
+lost the "this is a videos folder" signal in the path.
+
+### Changed
+
+- **Default videos destination renamed** from `<folder> - MOV` to
+  `<folder> - videos`.
+- **Mirrored subdirectories inside the wrapper now gain a ` - videos`
+  suffix** (every path segment, not just the wrapper). A source layout of
+  `Photos/2008 - iPhone/movie.mov` lands at
+  `Photos - videos/2008 - iPhone - videos/movie.mov` — every level of
+  the path is self-documenting, so a year-folder copied off in isolation
+  is still unambiguously the video pull.
+- Source-root videos (with no source-relative parent directory) land
+  directly under the wrapper, no extra subfolder.
+- The new translation is encapsulated in `_videos_dest_for(rel_path)`
+  and is idempotent — replaying a manifest or re-walking the
+  destination tree never accumulates double suffixes.
+
+### Notes
+
+- This is a behavior change for any pipeline that hardcoded the
+  `<folder> - MOV` path or scanned for the old layout. Existing video
+  folders are not retroactively renamed; only new sweeps use the new
+  layout. If you need to migrate an existing `<folder> - MOV/` to the
+  new shape, `mv "Photos - MOV" "Photos - videos"` and then rename
+  inner subfolders manually (or run `sweep --videos` again with the
+  source restored).
+- `--junk` and `--non-images` are unchanged. Their quarantines are
+  typically transient (review-and-restore-or-delete), so the
+  self-documenting-path concern doesn't apply.
+
 ## [0.9.1](https://github.com/mickmill54/image-deduper/releases/tag/v0.9.1) — 2026-05-07
 
 Broaden video format coverage in `dedupe sweep --videos` so older
