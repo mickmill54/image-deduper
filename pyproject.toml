@@ -26,6 +26,12 @@ dev = [
     "pyright>=1.1.380",
     "build>=1.2",
     "pyinstaller>=6.0",
+    # --- audit suite (see `make audit`, scripts/audit.sh) ---
+    "bandit>=1.7",     # Python static security analysis
+    "pip-audit>=2.7",  # CVE scan against deps
+    "radon>=6.0",      # cyclomatic complexity + maintainability index
+    "xenon>=0.9",      # radon's enforcement counterpart (gates on threshold)
+    "vulture>=2.10",   # dead-code detection
 ]
 
 [project.urls]

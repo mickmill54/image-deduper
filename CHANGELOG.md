@@ -8,6 +8,39 @@ Version bumps follow the conventional-commits convention described in `CLAUDE.md
 
 ## [Unreleased]
 
+### Added
+- **`make audit`** — comprehensive code-quality audit suite borrowing
+  the multi-check shape from a sibling project. 10 checks across two
+  tiers: 5 hard gates (`ruff`, `pyright`, `pytest --cov-fail-under=80`,
+  `pre-commit run --all-files`, project-specific destructive-call
+  safety check) and 5 report-only signals (`bandit`, `pip-audit`,
+  `radon cc`, `radon mi`, `vulture`). Implemented as `scripts/audit.sh`
+  with a PASS/FAIL summary table.
+- **`make audit-fast`** — local-dev subset (~5s) skipping the
+  pre-commit drift check and CVE scan.
+- **Project-specific safety check** (`scripts/check_no_destructive_calls.sh`)
+  greps `src/dedupe/` for forbidden destructive patterns
+  (`os.remove`, `shutil.rmtree`, `Path.rmdir`, `os.unlink`) and allows
+  `Path.unlink` only inside `src/dedupe/sweep.py`. Hard-gates the audit
+  to keep CLAUDE.md's "never delete files (except sweep --junk)"
+  invariant automatic, not just code-review-enforced.
+- **Audit GitHub Actions workflow** (`.github/workflows/audit.yml`)
+  runs nightly at 09:00 UTC and on `workflow_dispatch`. Uploads the
+  audit report as a workflow artifact (30-day retention). NOT wired
+  into PR checks — fast feedback (lint/typecheck/test) stays as the
+  per-PR gate; the full audit runs separately so CVE scans and
+  complexity grading don't slow down the dev loop.
+- Dev deps: `bandit`, `pip-audit`, `radon`, `xenon`, `vulture`.
+
+### Notes
+- No version bump for this change — audit is observational; nothing
+  about the installed CLI changes. The next version bump bundles with
+  the upcoming refactor (`#35`).
+- First baseline audit findings: 5/5 hard gates pass; report-only
+  surfaced 8 functions at Radon CC grade C+. These align with the
+  refactor scope already documented in `#35` and informed its priority
+  ordering.
+
 ## [0.7.0](https://github.com/mickmill54/image-deduper/releases/tag/v0.7.0) — 2026-05-07
 
 ### Added
