@@ -8,6 +8,40 @@ Version bumps follow the conventional-commits convention described in `CLAUDE.md
 
 ## [Unreleased]
 
+## [0.9.1](https://github.com/mickmill54/image-deduper/releases/tag/v0.9.1) — 2026-05-07
+
+Broaden video format coverage in `dedupe sweep --videos` so older
+camcorder, mobile, and DVD-rip files don't slip past the slideshow
+sanitizer. Documentation-heavy patch — no behavior change for any
+file type already covered by v0.9.0.
+
+### Changed
+
+- **`VIDEO_EXTENSIONS` expanded from 11 → 20 entries.** Added: `.asf`,
+  `.f4v`, `.3g2`, `.mts`, `.m2ts`, `.vob`, `.ogv`, `.divx`, `.lrv`.
+  These cover Windows Media (`.asf`), Flash (`.f4v`), CDMA mobile
+  (`.3g2`), AVCHD camcorders (`.mts`/`.m2ts`), DVD rips (`.vob`),
+  Linux screencasts (`.ogv`), DivX-AVI variants (`.divx`), and GoPro
+  preview files (`.lrv`).
+- The constant now ships with an extensive comment block documenting
+  what's INCLUDED (organized by source category) and what's
+  DELIBERATELY EXCLUDED — `.ts` (conflicts with TypeScript source
+  files), `.rm`/`.rmvb` (extinct), `.mxf` (broadcast/professional, not
+  consumer), and `.hevc`/`.h264` (raw codec streams without
+  containers).
+- `docs/architecture.md` gains a "Video format coverage" subsection
+  explaining the allowlist methodology and the rationale for each
+  exclusion.
+
+### Notes
+
+- The action remains **move to `<folder> - MOV/`**, never delete. The
+  asymmetric cost of accidentally moving a non-video to the videos
+  folder is low (the user can drag it back); the cost of *missing* a
+  video that breaks slideshow software is real.
+- Adding new extensions to `VIDEO_EXTENSIONS` should be a PR with a
+  short justification in the description.
+
 ## [0.9.0](https://github.com/mickmill54/image-deduper/releases/tag/v0.9.0) — 2026-05-08
 
 `dedupe sweep` learns two new modes for relocating user content out of

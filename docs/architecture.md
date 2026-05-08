@@ -275,6 +275,33 @@ extensions — exactly the files `sweep` needs to find. Sweep instead
 calls `walk.walk_files` directly with `include_hidden=True` and no
 predicate, then narrows via `_classify()` per file.
 
+### Video format coverage (`VIDEO_EXTENSIONS`)
+
+`sweep --videos` was added because slideshow software in the field
+silently chokes on `.mov`/`.mp4` files mixed in with photos. The
+constant is a deliberate allowlist (see the comment block above
+`VIDEO_EXTENSIONS` in `src/dedupe/sweep.py`) covering 20 extensions
+across the formats consumer slideshow workflows actually encounter:
+modern phones (`.mov`, `.mp4`, `.m4v`), older Windows captures
+(`.avi`, `.mkv`, `.wmv`, `.asf`), Flash legacy (`.flv`, `.f4v`),
+open-web (`.webm`), MPEG program streams (`.mpg`, `.mpeg`), 3GPP
+mobile (`.3gp`, `.3g2`), AVCHD camcorders (`.mts`, `.m2ts`), DVD
+rips (`.vob`), Linux screencasts (`.ogv`), DivX-AVI variants
+(`.divx`), and GoPro preview files (`.lrv`).
+
+Three classes of format are deliberately **excluded**:
+
+- `.ts` (MPEG transport stream) — same extension as TypeScript source.
+  The asymmetric cost of moving a developer's TS source file outweighs
+  the rare gain of catching a transport-stream video in a photo folder.
+- `.rm`, `.rmvb` (RealMedia) — effectively extinct.
+- `.mxf`, `.hevc`, `.h264` — broadcast/professional or raw codec
+  streams. Niche; not seen in consumer slideshow workflows.
+
+The action is "move to `<folder> - MOV/`", not "delete", so the safety
+cost of an overzealous match is low. Adding new extensions to
+`VIDEO_EXTENSIONS` should be a PR with a brief justification.
+
 ## Data flow — `dedupe convert <folder>`
 
 ```
