@@ -331,3 +331,250 @@ def test_archive_refuses_to_overwrite(convert_tree: Path, tmp_path: Path):
     assert (convert_tree / "a.jpg").is_file()
     # Source file that was archived is gone
     assert not (convert_tree / "sub" / "c.jpg").exists()
+
+
+# --- --on-conflict modes (#47) ----------------------------------------------
+#
+# Setup for these tests mirrors a real iPhone library layout: every
+# source has a matching destination already in place, so the conflict
+# path is exercised for every file. We build the fixture inline rather
+# than reusing convert_tree because we want full control over which
+# destinations exist and what bytes they hold.
+
+
+def _build_conflict_tree(root: Path) -> tuple[Path, Path]:
+    """Make a source folder with `IMG_001.jpg` + `IMG_002.jpg` and an
+    output folder with pre-existing `IMG_001.png` + `IMG_002.png`
+    (forcing collisions on conversion to PNG). Returns (src, out)."""
+    src = root / "in"
+    out = root / "out"
+    src.mkdir()
+    out.mkdir()
+    # Two real (tiny) JPGs as inputs.
+    Image.new("RGB", (4, 4), (200, 30, 30)).save(src / "IMG_001.jpg", "JPEG")
+    Image.new("RGB", (4, 4), (30, 200, 30)).save(src / "IMG_002.jpg", "JPEG")
+    # Pre-existing PNGs at the destinations — these block the convert
+    # under default `skip` mode, and the new modes resolve them.
+    (out / "IMG_001.png").write_bytes(b"\x89PNG\r\n\x1a\n-existing-1")
+    (out / "IMG_002.png").write_bytes(b"\x89PNG\r\n\x1a\n-existing-2")
+    return src, out
+
+
+def test_on_conflict_skip_is_default_and_preserves_v0_12_behavior(tmp_path: Path):
+    """Default mode is `skip`: refuse to overwrite, count as files_skipped,
+    log a 'refusing to overwrite' error, leave HEIC originals alone.
+    Pinned so the v0.13.0 default change can't sneak in unnoticed."""
+    src, out = _build_conflict_tree(tmp_path)
+
+    result = run_convert(
+        _opts(src, out, target_format="png", source_exts=frozenset({".jpg"})),
+        QUIET,
+    )
+    assert result.files_skipped == 2
+    assert result.files_converted == 0
+    assert result.files_kept_existing == 0
+    assert all("refusing to overwrite" in e for e in result.errors)
+    # Pre-existing PNGs untouched.
+    assert (out / "IMG_001.png").read_bytes() == b"\x89PNG\r\n\x1a\n-existing-1"
+    # Source JPGs untouched (no archive without --archive-originals).
+    assert (src / "IMG_001.jpg").is_file()
+    assert (src / "IMG_002.jpg").is_file()
+
+
+def test_on_conflict_archive_anyway_keeps_existing_archives_originals(tmp_path: Path):
+    """archive-anyway: don't write a new PNG (existing one is canonical),
+    but DO archive the JPG so the source folder ends up clean. This is
+    the iPhone HEIC+JPG-pair use case."""
+    src, out = _build_conflict_tree(tmp_path)
+    archive = tmp_path / "archive"
+
+    result = run_convert(
+        _opts(
+            src,
+            out,
+            target_format="png",
+            source_exts=frozenset({".jpg"}),
+            on_conflict="archive-anyway",
+            archive_originals=True,
+            archive_folder=archive,
+        ),
+        QUIET,
+    )
+
+    # Both files were "kept existing" — no new PNGs written.
+    assert result.files_kept_existing == 2
+    assert result.files_converted == 0
+    assert result.bytes_written == 0
+    assert result.files_skipped == 0
+    assert not result.errors
+
+    # Pre-existing PNGs unchanged.
+    assert (out / "IMG_001.png").read_bytes() == b"\x89PNG\r\n\x1a\n-existing-1"
+    assert (out / "IMG_002.png").read_bytes() == b"\x89PNG\r\n\x1a\n-existing-2"
+
+    # Originals were archived — source is now clean.
+    assert result.files_archived == 2
+    assert (archive / "IMG_001.jpg").is_file()
+    assert (archive / "IMG_002.jpg").is_file()
+    assert not (src / "IMG_001.jpg").exists()
+    assert not (src / "IMG_002.jpg").exists()
+
+
+def test_on_conflict_archive_anyway_no_archive_skips_only(tmp_path: Path):
+    """archive-anyway WITHOUT --archive-originals: keep_existing path runs
+    (no errors, no new PNGs written) but the originals stay in source
+    because there's no archive pass enabled. Edge case worth pinning so
+    nobody accidentally couples archive-anyway to archive_originals=True."""
+    src, out = _build_conflict_tree(tmp_path)
+
+    result = run_convert(
+        _opts(
+            src,
+            out,
+            target_format="png",
+            source_exts=frozenset({".jpg"}),
+            on_conflict="archive-anyway",
+            archive_originals=False,
+        ),
+        QUIET,
+    )
+    assert result.files_kept_existing == 2
+    assert result.files_archived == 0
+    assert not result.errors
+    # Originals still in source because no archive was requested.
+    assert (src / "IMG_001.jpg").is_file()
+    assert (src / "IMG_002.jpg").is_file()
+
+
+def test_on_conflict_number_writes_suffixed_variant(tmp_path: Path):
+    """number: writes IMG_001-1.png, IMG_002-1.png, both files coexist."""
+    src, out = _build_conflict_tree(tmp_path)
+
+    result = run_convert(
+        _opts(
+            src,
+            out,
+            target_format="png",
+            source_exts=frozenset({".jpg"}),
+            on_conflict="number",
+        ),
+        QUIET,
+    )
+
+    assert result.files_converted == 2
+    assert result.files_numbered == 2
+    assert result.files_kept_existing == 0
+    assert not result.errors
+
+    # Both pre-existing PNGs untouched + numbered variants written.
+    assert (out / "IMG_001.png").read_bytes() == b"\x89PNG\r\n\x1a\n-existing-1"
+    assert (out / "IMG_001-1.png").is_file()
+    assert (out / "IMG_002.png").read_bytes() == b"\x89PNG\r\n\x1a\n-existing-2"
+    assert (out / "IMG_002-1.png").is_file()
+    # The numbered-output bytes are real PNG (not the placeholder).
+    assert (out / "IMG_001-1.png").read_bytes().startswith(b"\x89PNG")
+
+
+def test_on_conflict_number_finds_lowest_unused_suffix(tmp_path: Path):
+    """If IMG_001-1.png is also taken, number tries -2, -3, ..."""
+    src, out = _build_conflict_tree(tmp_path)
+    # Pre-occupy -1 and -2 to force the writer to pick -3.
+    (out / "IMG_001-1.png").write_bytes(b"taken-1")
+    (out / "IMG_001-2.png").write_bytes(b"taken-2")
+
+    result = run_convert(
+        _opts(
+            src,
+            out,
+            target_format="png",
+            source_exts=frozenset({".jpg"}),
+            on_conflict="number",
+        ),
+        QUIET,
+    )
+    assert (out / "IMG_001-3.png").is_file()
+    # The pre-existing -1 and -2 still hold the placeholder bytes.
+    assert (out / "IMG_001-1.png").read_bytes() == b"taken-1"
+    assert (out / "IMG_001-2.png").read_bytes() == b"taken-2"
+    assert result.files_numbered == 2  # IMG_001 + IMG_002 both got numbered
+
+
+def test_on_conflict_overwrite_replaces_existing(tmp_path: Path):
+    """overwrite: existing PNG replaced with the freshly-encoded one."""
+    src, out = _build_conflict_tree(tmp_path)
+
+    result = run_convert(
+        _opts(
+            src,
+            out,
+            target_format="png",
+            source_exts=frozenset({".jpg"}),
+            on_conflict="overwrite",
+        ),
+        QUIET,
+    )
+
+    assert result.files_converted == 2
+    assert result.files_overwritten == 2
+    assert result.files_kept_existing == 0
+    assert result.files_numbered == 0
+    assert not result.errors
+
+    # Pre-existing placeholder bytes have been replaced — file now starts
+    # with PNG magic AND is bigger than the placeholder (which was 16
+    # bytes; a 4×4 PNG is hundreds of bytes).
+    a = (out / "IMG_001.png").read_bytes()
+    assert a.startswith(b"\x89PNG")
+    assert len(a) > 16
+
+
+def test_on_conflict_dry_run_archive_anyway_records_outcome_no_writes(tmp_path: Path):
+    """archive-anyway + dry_run: counters update, but nothing on disk
+    changes (no archive moves, no JPG write)."""
+    src, out = _build_conflict_tree(tmp_path)
+    archive = tmp_path / "archive"
+
+    result = run_convert(
+        _opts(
+            src,
+            out,
+            target_format="png",
+            source_exts=frozenset({".jpg"}),
+            on_conflict="archive-anyway",
+            archive_originals=True,
+            archive_folder=archive,
+            dry_run=True,
+        ),
+        QUIET,
+    )
+
+    assert result.files_kept_existing == 2
+    assert result.files_archived == 0  # no physical archive in dry-run
+    # Source originals untouched.
+    assert (src / "IMG_001.jpg").is_file()
+    assert (src / "IMG_002.jpg").is_file()
+    # Archive folder may or may not exist; it shouldn't contain anything.
+    if archive.exists():
+        assert not list(archive.glob("*.jpg"))
+
+
+def test_on_conflict_invalid_mode_raises_via_options(tmp_path: Path):
+    """Defensive: an unknown mode raises rather than silently doing
+    something surprising. The CLI's argparse `choices=` blocks this at
+    the user boundary; this test pins the library-level guard."""
+    src, out = _build_conflict_tree(tmp_path)
+
+    result = run_convert(
+        _opts(
+            src,
+            out,
+            target_format="png",
+            source_exts=frozenset({".jpg"}),
+            on_conflict="bogus-mode",
+        ),
+        QUIET,
+    )
+    # The mode is invalid but the conflict is still resolved per the
+    # ValueError fallback in _convert_one — every file becomes an error.
+    assert all("unknown on_conflict mode" in e for e in result.errors)
+    assert result.files_converted == 0

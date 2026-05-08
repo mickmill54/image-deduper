@@ -411,20 +411,52 @@ filter by source_exts      default: {.heic, .heif}; overridable via --source-ext
 plan output paths          mirror layout into <folder>-converted/, swap extension
   │  list[(src, dest)]
   ▼
-ThreadPoolExecutor         _convert_one() per pair: open → convert → save
-  │  raises FileExistsError if dest already exists (refuse to overwrite)
+ThreadPoolExecutor         _convert_one() per pair, dispatching on --on-conflict:
+  │                          dest doesn't exist  → write JPG (OUTCOME_CONVERTED)
+  │                          skip            (default) → raise FileExistsError
+  │                          archive-anyway          → no write, original archived
+  │                          number                  → write IMG-1.jpg, IMG-2.jpg, ...
+  │                          overwrite               → replace existing JPG
   ▼
-[optional] archive pass    if --archive-originals:
-                             for each successful conversion, sequentially move
+[optional] archive pass    if --archive-originals (or --in-place, which implies it):
+                             for each entry in result.conversions sequentially move
                              the original into <folder>-heic/ (mirroring
                              layout) and append an entry to
-                             archive-manifest.json
+                             archive-manifest.json. archive-anyway entries flow
+                             through this pass identically — the JPG-keep is
+                             decoupled from the HEIC-archive.
   │
   ▼
 ConvertResult              files_scanned, files_converted, files_skipped,
+                           files_kept_existing, files_numbered, files_overwritten,
                            bytes_written, files_archived, errors,
                            conversions, archive_entries
 ```
+
+### `--on-conflict` modes (#47)
+
+`dedupe convert --in-place` runs face-first into the iPhone HEIC+JPG
+pair pattern: every shot exists as both `IMG_001.heic` and
+`IMG_001.jpg`, so writing the converted JPG hits a destination
+conflict. Four modes resolve it:
+
+| Mode | New JPG written? | HEIC archived? | Use case |
+|---|---|---|---|
+| `skip` (default) | No (raises) | No | Conservative; preserves v0.12.x semantics. |
+| `archive-anyway` | No | **Yes** | iPhone HEIC+JPG pairs. The existing JPG is canonical; the HEIC is redundant. |
+| `number` | Yes (`IMG_001-1.jpg`) | Yes | Different photos that happen to share a basename. Both files coexist. |
+| `overwrite` | Yes (replaces) | Yes | Power-user. The previous JPG is lost. |
+
+Only the conflicting destinations branch into one of the four modes.
+Files whose JPG twin doesn't exist take the happy path
+(`OUTCOME_CONVERTED`) regardless of mode.
+
+`number` uses `_find_numbered_destination(dest)`, which walks
+`dest-1`, `dest-2`, `...` and returns the lowest-N path that doesn't
+exist. Race-prone under threads (two workers could pick the same
+suffix), but the source files have unique names so the only way it
+bites is when the source itself contains files that already use the
+suffix scheme.
 
 Without `--archive-originals` (the default), `convert` never modifies
 the source folder — the only filesystem mutation is `Image.save(dest,

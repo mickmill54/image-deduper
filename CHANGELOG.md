@@ -8,6 +8,67 @@ Version bumps follow the conventional-commits convention described in `CLAUDE.md
 
 ## [Unreleased]
 
+## [0.13.0](https://github.com/mickmill54/image-deduper/releases/tag/v0.13.0) — 2026-05-08
+
+`dedupe convert --in-place` learns four conflict-resolution modes,
+fixing the iPhone HEIC+JPG-pair pain point. Closes #47.
+
+### Added
+
+- **`--on-conflict {skip,archive-anyway,number,overwrite}`**, a new
+  flag on `dedupe convert`. Default is `skip` (preserves v0.12.0
+  behavior — every existing test still passes).
+
+  | Mode | What happens when JPG already exists | Original HEIC |
+  |---|---|---|
+  | `skip` (default) | Refuse to overwrite, count as `files_skipped`, log error | Stays in source; not archived |
+  | `archive-anyway` | No new JPG written (existing is canonical) | **Archived** so source ends up clean |
+  | `number` | Writes `IMG_001-1.jpg`, `IMG_001-2.jpg`, ... lowest free suffix | Archived |
+  | `overwrite` | Replaces existing JPG with the new conversion | Archived |
+
+  `archive-anyway` is the magic mode for iPhone libraries: a single
+  `dedupe convert /Volumes/SSD-EXT/iPhone --in-place --on-conflict archive-anyway`
+  produces a HEIC-free source folder in one pass, even when every HEIC
+  has a JPG twin from the iPhone's "share as JPG" export.
+
+- New per-outcome counters in `ConvertResult`: `files_kept_existing`,
+  `files_numbered`, `files_overwritten`. JSON output exposes them
+  alongside `on_conflict`. The human summary prints each non-zero
+  counter so users see exactly which mode produced what.
+
+- New helpers in `src/dedupe/convert.py`:
+  - `_find_numbered_destination(dest)` — picks the lowest-N suffix
+    not in use (Finder-style copy-on-conflict).
+  - `_write_image(...)` — extracted from the old `_convert_one` so
+    each mode can call into the same encoder path.
+  - Mode constants: `ON_CONFLICT_SKIP`, `ON_CONFLICT_KEEP_EXISTING`,
+    `ON_CONFLICT_NUMBER`, `ON_CONFLICT_OVERWRITE` and the matching
+    `OUTCOME_*` strings used in the per-file accounting.
+
+### Changed
+
+- `_convert_one` now returns `(bytes_written, outcome, actual_dest)`
+  instead of just `bytes_written`. Callers (the orchestrator in
+  `run_convert`) use the outcome to update mode-specific counters and
+  the actual_dest to report the path that was actually written
+  (important for `number`, where `actual_dest != dest`).
+
+### Notes
+
+- The default mode (`skip`) is **unchanged** — this is purely additive.
+  Any pipeline calling `dedupe convert` without `--on-conflict` gets
+  the same behavior as v0.12.0.
+- Race condition under heavy threading: `number` mode picks
+  `dest-N` based on `Path.exists()` checks. Two workers picking the
+  same suffix would collide on the second writer. Mitigated by the
+  fact that source files have unique names (so two source files only
+  collide on output if a third file independently creates the gap),
+  and the second writer would surface the collision via the regular
+  error path. Hardening is a future enhancement; not in scope here.
+- `archive-anyway` plays nicely with `--archive-originals` (and
+  `--in-place`, which implies it). Without `--archive-originals` the
+  HEIC stays put — no surprising side effect. A test pins this.
+
 ## [0.12.0](https://github.com/mickmill54/image-deduper/releases/tag/v0.12.0) — 2026-05-08
 
 `dedupe scan` now caches SHA-256 digests so an interrupted run

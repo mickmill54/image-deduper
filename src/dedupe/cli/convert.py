@@ -145,6 +145,20 @@ def register(sub: argparse._SubParsersAction) -> None:
             "AND the basename."
         ),
     )
+    p.add_argument(
+        "--on-conflict",
+        dest="on_conflict",
+        default="skip",
+        choices=["skip", "archive-anyway", "number", "overwrite"],
+        help=(
+            "Behavior when the converted output already exists:\n"
+            "  skip            (default) refuse to overwrite, leave HEIC in source\n"
+            "  archive-anyway  keep existing JPG, archive HEIC anyway\n"
+            "                  (best for iPhone HEIC+JPG pairs)\n"
+            "  number          write IMG_001-1.jpg, IMG_001-2.jpg, ...\n"
+            "  overwrite       replace the existing JPG (HEIC archived)"
+        ),
+    )
     p.set_defaults(func=_cmd_convert)
 
 
@@ -215,6 +229,7 @@ def _cmd_convert(args: argparse.Namespace, ui: UI) -> int:
         archive_originals=archive_originals,
         archive_folder=args.archive_folder,
         exclude_patterns=tuple(flatten_list_arg(args.exclude)),
+        on_conflict=args.on_conflict,
     )
 
     try:
@@ -235,10 +250,14 @@ def _cmd_convert(args: argparse.Namespace, ui: UI) -> int:
                 "target_format": opts.target_format,
                 "quality": opts.quality,
                 "source_exts": sorted(opts.source_exts),
+                "on_conflict": opts.on_conflict,
                 "files_scanned": result.files_scanned,
                 "files_converted": result.files_converted,
                 "files_skipped": result.files_skipped,
                 "files_archived": result.files_archived,
+                "files_kept_existing": result.files_kept_existing,
+                "files_numbered": result.files_numbered,
+                "files_overwritten": result.files_overwritten,
                 "bytes_written": result.bytes_written,
                 "errors": result.errors,
                 "conversions": [
@@ -254,8 +273,20 @@ def _cmd_convert(args: argparse.Namespace, ui: UI) -> int:
         ui.info(f"  files scanned:    {result.files_scanned}")
         ui.info(f"  files {verb}: {result.files_converted}")
         ui.info(f"  files skipped:    {result.files_skipped}")
+        # Per-conflict-mode breakdown only printed when a non-default
+        # mode produced a non-zero count, to keep the default summary
+        # noise-free.
+        if result.files_kept_existing:
+            kept_verb = "would keep existing" if opts.dry_run else "kept existing"
+            ui.info(f"  files {kept_verb}: {result.files_kept_existing}")
+        if result.files_numbered:
+            num_verb = "would number" if opts.dry_run else "numbered"
+            ui.info(f"  files {num_verb}: {result.files_numbered}")
+        if result.files_overwritten:
+            over_verb = "would overwrite" if opts.dry_run else "overwritten"
+            ui.info(f"  files {over_verb}: {result.files_overwritten}")
         ui.info(
-            f"  bytes written:    {result.bytes_written} " f"({format_bytes(result.bytes_written)})"
+            f"  bytes written:    {result.bytes_written} ({format_bytes(result.bytes_written)})"
         )
         if opts.archive_originals:
             archive_verb = "would archive" if opts.dry_run else "archived"
