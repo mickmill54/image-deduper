@@ -6,14 +6,29 @@
 files from a directory. Built for curating photo slideshows where safety and
 auditability matter more than speed.
 
-- `src/dedupe/` — Python package (CLI, scan, similar, restore, manifest, ui)
-- `tests/` — pytest suite with programmatically-generated fixture images
-- `Makefile` — single entrypoint for setup, test, lint, format
-- `pyproject.toml` — editable install, ruff + pytest config
+- `src/dedupe/` — runtime modules: `scan`, `find-similar` (in
+  `similar.py`), `restore`, `convert`, `info`, `sweep`, plus shared
+  infrastructure (`walk`, `manifest`, `ui`).
+- `src/dedupe/cli/` — CLI package: one module per subcommand
+  (`scan.py`, `find_similar.py`, `restore.py`, `convert.py`, `info.py`,
+  `sweep.py`) plus a parser shell (`parser.py`) and shared formatters
+  (`output.py`). Each subcommand module exposes `register(sub)` and
+  `_cmd_<name>(args, ui)`; `__init__.py` iterates a `SUBCOMMANDS`
+  tuple to wire dispatch.
+- `tests/` — pytest suite with programmatically-generated fixture images.
+- `Makefile` — single entrypoint for setup, test, lint, format,
+  typecheck, audit, build, binary.
+- `scripts/` — `audit.sh` (full code-quality audit), `check_no_destructive_calls.sh`
+  (project-specific safety check).
+- `pyproject.toml` — editable install, ruff + pytest + pyright config.
 
-The tool is invoked as `dedupe <subcommand> ...` after `make setup`. Three
-subcommands: `scan` (find + quarantine exact duplicates), `find-similar`
-(perceptual-hash report only, never moves files), `restore` (replay manifest).
+The tool is invoked as `dedupe <subcommand> ...` after `make setup`.
+Six subcommands: `scan` (find + quarantine exact duplicates),
+`find-similar` (perceptual-hash report only, never moves files),
+`restore` (replay manifest), `convert` (image format conversion),
+`info` (read-only folder stats), `sweep` (clear out non-photo content;
+the only place where deletion is the default action, narrowly scoped
+to a hardcoded JUNK_FILES allowlist).
 
 ## Work Process
 
@@ -114,19 +129,28 @@ Conventional-commits decide the bump:
 
 All Python code follows SOLID:
 
-- **S — Single Responsibility**: Each module does one thing. `cli.py` parses
-  args; `scan.py` finds duplicates; `manifest.py` reads/writes the manifest;
-  `ui.py` is the only module that talks to the console.
-- **O — Open/Closed**: Add a new subcommand by adding a module + wiring it in
-  `cli.py`, not by modifying existing scan/restore logic.
+- **S — Single Responsibility**: Each module does one thing. The
+  `cli/` package parses args (one file per subcommand); each runtime
+  module (`scan.py`, `convert.py`, `sweep.py`, etc.) exposes a single
+  `run_*` entry point; `manifest.py` provides the generic
+  `AtomicManifestWriter[Entry]`; `walk.py` provides the shared
+  walker; `ui.py` is the only module that talks to the console.
+- **O — Open/Closed**: Add a new subcommand by adding a module under
+  `src/dedupe/` and a CLI module under `src/dedupe/cli/`, not by
+  modifying existing scan/restore logic. Add a new manifest type by
+  parameterizing `AtomicManifestWriter` with your entry dataclass —
+  no need to subclass.
 - **L — Liskov Substitution**: The `ui` console wrapper exposes the same
   contract whether running in rich, quiet, or json mode — callers do not
   branch on mode.
 - **I — Interface Segregation**: Keep function signatures focused. A function
   that only needs a path should not take the whole config object.
-- **D — Dependency Inversion**: High-level commands depend on the `ui` and
-  `manifest` abstractions, not on `rich` or `json` directly. Pillow / imagehash
-  are imported only inside `similar.py`.
+  `walk.walk_files` takes only a `WalkOptions` and a `predicate`;
+  callers don't pass full subcommand options through.
+- **D — Dependency Inversion**: High-level commands depend on the `ui`
+  and `manifest` and `walk` abstractions, not on `rich` / `json` /
+  `pathlib.rglob` directly. Pillow / imagehash / pillow-heif are
+  imported only inside `similar.py` and `convert.py`.
 
 ## Safety Invariants (project-specific)
 

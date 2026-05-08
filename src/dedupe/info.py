@@ -14,6 +14,7 @@ from pathlib import Path
 
 from dedupe.scan import IMAGE_EXTENSIONS
 from dedupe.ui import UI
+from dedupe.walk import is_hidden, matches_exclude
 
 logger = logging.getLogger(__name__)
 
@@ -50,12 +51,11 @@ def run_info(opts: InfoOptions, ui: UI) -> InfoResult:  # noqa: PLR0912 — sing
 
     ui.info(f"Inspecting [bold]{opts.source}[/bold]")
 
-    # Apply exclude patterns via the same machinery scan uses (so the
-    # behavior is consistent across commands). We DON'T use
-    # iter_image_files here because info wants to count non-image files
-    # too — instead we walk manually with the same hidden / symlink rules.
-    from dedupe.scan import _is_hidden, _matches_exclude  # noqa: PLC0415
-
+    # info has unique reporting needs vs the generic `walk_files` —
+    # it COUNTS hidden files and broken symlinks rather than just
+    # skipping them silently. So we walk manually using the same
+    # public helpers (is_hidden, matches_exclude) as everyone else,
+    # but emit per-file decisions instead of just yielding paths.
     walker = opts.source.rglob("*") if opts.recursive else opts.source.iterdir()
 
     result = InfoResult(source=opts.source)
@@ -72,12 +72,12 @@ def run_info(opts: InfoOptions, ui: UI) -> InfoResult:  # noqa: PLR0912 — sing
                     continue
             if not path.is_file():
                 continue
-            hidden = _is_hidden(path, opts.source)
+            hidden = is_hidden(path, opts.source)
             if hidden:
                 result.hidden_files += 1
                 if not opts.include_hidden:
                     continue
-            if _matches_exclude(path, opts.source, opts.exclude_patterns):
+            if matches_exclude(path, opts.source, opts.exclude_patterns):
                 continue
         except OSError as exc:
             result.errors.append(f"stat failed for {path}: {exc}")

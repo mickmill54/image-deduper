@@ -1,24 +1,30 @@
-"""Manifest: append-only JSON record of every duplicate move.
+"""Manifests: append-only JSON records of mutations the tool performed.
 
-The manifest is the source of truth for `restore`. It is flushed after every
-entry, so a crash mid-scan still leaves a usable manifest.
+Three concrete manifests share the same on-disk shape and write
+algorithm:
+
+  - `manifest.json`         (scan: which dup was moved where)
+  - `archive-manifest.json` (convert --archive-originals: where the
+                             original went and what replaced it)
+  - `sweep-manifest.json`   (sweep --junk: what was deleted or moved)
+
+The atomic-flush-after-every-entry algorithm is identical across all
+three. This module provides one generic `AtomicManifestWriter[Entry]`
+that any subcommand can configure with its own header dict and entry
+type.
+
+`ManifestWriter` (no generic) is a thin compatibility wrapper that
+preserves the keyword-argument `add(...)` API scan.py used historically
+and adds resume_from support specific to scan's resumable-runs feature.
 
 On-disk format (pretty-printed for human auditability):
 
     {
       "version": 1,
       "created_at": "2026-05-04T12:00:00+00:00",
-      "source_folder": "/abs/path/to/source",
-      "dups_folder": "/abs/path/to/source-dups",
+      ...header fields specific to the subcommand...,
       "entries": [
-        {
-          "original_path": "...",
-          "new_path": "...",
-          "sha256": "...",
-          "kept_path": "...",
-          "size_bytes": 12345,
-          "timestamp": "2026-05-04T12:00:01+00:00"
-        }
+        ...subcommand-specific entry shape...
       ]
     }
 """
@@ -27,18 +33,27 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, Generic, TypeVar
 
 logger = logging.getLogger(__name__)
 
 MANIFEST_NAME = "manifest.json"
 MANIFEST_VERSION = 1
 
+# The generic atomic writer is parameterized by entry type. Each
+# subcommand passes its own `entry_to_dict` (typically `dataclasses.asdict`).
+EntryT = TypeVar("EntryT")
+
 
 @dataclass(frozen=True)
 class ManifestEntry:
+    """Scan/restore manifest entry: one record of a moved duplicate."""
+
     original_path: str
     new_path: str
     sha256: str
@@ -49,13 +64,17 @@ class ManifestEntry:
 
 @dataclass
 class Manifest:
+    """In-memory representation of a scan/restore manifest. Used only by
+    `manifest.load()` for restore + resumable scan; the writer side now
+    goes through `AtomicManifestWriter`."""
+
     source_folder: str
     dups_folder: str
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     version: int = MANIFEST_VERSION
     entries: list[ManifestEntry] = field(default_factory=list)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "version": self.version,
             "created_at": self.created_at,
@@ -65,12 +84,69 @@ class Manifest:
         }
 
 
-class ManifestWriter:
-    """Incremental writer. Flushes the full manifest after every entry.
+class AtomicManifestWriter(Generic[EntryT]):
+    """Append-only JSON writer with atomic per-entry flush.
 
-    If `resume_from` is provided, the writer is initialized from that
-    pre-existing manifest (preserving its `created_at` and entries) so a
-    crashed-and-resumed scan produces a single contiguous manifest.
+    Each subcommand constructs one with:
+      - `path`: where the manifest lives on disk
+      - `header`: a dict of top-level fields (version, created_at,
+        source_folder, etc.) — anything that isn't `entries`
+      - `entry_to_dict`: serializer for one entry; for dataclass
+        entries, pass `dataclasses.asdict`
+
+    `add(entry)` appends + flushes under a thread lock. The flush
+    writes to `<path>.tmp` and atomically renames it on top of
+    `<path>`, so a crash mid-write never corrupts the manifest.
+
+    `add_existing_entries(entries_as_dicts)` lets a subcommand seed the
+    writer with pre-existing entries (used by scan's resumable-runs
+    feature: load the existing manifest, replay its entries into the
+    fresh writer, then continue appending new ones).
+    """
+
+    def __init__(
+        self,
+        path: Path,
+        *,
+        header: dict[str, Any],
+        entry_to_dict: Callable[[EntryT], dict[str, Any]] = asdict,  # type: ignore[assignment]
+    ) -> None:
+        self.path = path
+        self._lock = threading.Lock()
+        self._header = dict(header)  # defensive copy
+        self._entries: list[dict[str, Any]] = []
+        self._entry_to_dict = entry_to_dict
+        self._flush()
+
+    def add(self, entry: EntryT) -> None:
+        with self._lock:
+            self._entries.append(self._entry_to_dict(entry))
+            self._flush()
+
+    def add_existing_entries(self, entries: Iterable[dict[str, Any]]) -> None:
+        """Seed with already-serialized entries. Used for resumable runs."""
+        with self._lock:
+            self._entries.extend(entries)
+            self._flush()
+
+    def _flush(self) -> None:
+        payload = {**self._header, "entries": self._entries}
+        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
+        tmp.parent.mkdir(parents=True, exist_ok=True)
+        with tmp.open("w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2, sort_keys=False)
+            fh.write("\n")
+            fh.flush()
+        tmp.replace(self.path)
+
+
+class ManifestWriter:
+    """Compatibility wrapper for scan's manifest.
+
+    Preserves the keyword-argument `add(...)` API that scan.py used
+    historically and adds resume-from support specific to scan's
+    resumable-runs feature. Underneath it's a thin layer over
+    `AtomicManifestWriter[ManifestEntry]`.
     """
 
     def __init__(
@@ -81,21 +157,31 @@ class ManifestWriter:
         *,
         resume_from: Manifest | None = None,
     ) -> None:
-        self.path = path
         if resume_from is not None:
-            self.manifest = Manifest(
-                source_folder=resume_from.source_folder,
-                dups_folder=resume_from.dups_folder,
-                created_at=resume_from.created_at,
-                version=resume_from.version,
-                entries=list(resume_from.entries),
-            )
+            header = {
+                "version": resume_from.version,
+                "created_at": resume_from.created_at,
+                "source_folder": resume_from.source_folder,
+                "dups_folder": resume_from.dups_folder,
+            }
+            seed_entries: list[dict[str, Any]] = [asdict(e) for e in resume_from.entries]
         else:
-            self.manifest = Manifest(
-                source_folder=str(source_folder.resolve()),
-                dups_folder=str(dups_folder.resolve()),
-            )
-        self._write()
+            header = {
+                "version": MANIFEST_VERSION,
+                "created_at": datetime.now(UTC).isoformat(),
+                "source_folder": str(source_folder.resolve()),
+                "dups_folder": str(dups_folder.resolve()),
+            }
+            seed_entries = []
+        self._writer: AtomicManifestWriter[ManifestEntry] = AtomicManifestWriter(
+            path, header=header
+        )
+        if seed_entries:
+            self._writer.add_existing_entries(seed_entries)
+
+    @property
+    def path(self) -> Path:
+        return self._writer.path
 
     def add(
         self,
@@ -114,20 +200,8 @@ class ManifestWriter:
             size_bytes=size_bytes,
             timestamp=datetime.now(UTC).isoformat(),
         )
-        self.manifest.entries.append(entry)
-        self._write()
+        self._writer.add(entry)
         return entry
-
-    def _write(self) -> None:
-        # Atomic-ish: write to a tempfile and rename, so a crash mid-write
-        # never leaves the manifest truncated.
-        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-        tmp.parent.mkdir(parents=True, exist_ok=True)
-        with tmp.open("w", encoding="utf-8") as fh:
-            json.dump(self.manifest.to_dict(), fh, indent=2, sort_keys=False)
-            fh.write("\n")
-            fh.flush()
-        tmp.replace(self.path)
 
 
 def load(path: Path) -> Manifest:

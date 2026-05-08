@@ -17,19 +17,19 @@ folder, refusing to overwrite. Same family of guarantees as `scan`.
 
 from __future__ import annotations
 
-import json
 import logging
 import shutil
-import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
 from PIL import Image
 
+from dedupe.manifest import AtomicManifestWriter
 from dedupe.scan import ScanOptions, iter_image_files
 from dedupe.ui import UI
+from dedupe.walk import rel
 
 logger = logging.getLogger(__name__)
 
@@ -95,44 +95,24 @@ class ConvertResult:
     archive_entries: list[ArchiveEntry] = field(default_factory=list)
 
 
-class _ArchiveManifestWriter:
-    """Incremental writer for the archive manifest. Atomic per-entry flush."""
-
-    def __init__(
-        self,
-        path: Path,
-        *,
-        source_folder: Path,
-        archive_folder: Path,
-        output_folder: Path,
-        target_format: str,
-    ) -> None:
-        self.path = path
-        self._lock = threading.Lock()
-        self._payload: dict = {
-            "version": ARCHIVE_MANIFEST_VERSION,
-            "created_at": datetime.now(UTC).isoformat(),
-            "source_folder": str(source_folder.resolve()),
-            "archive_folder": str(archive_folder.resolve()),
-            "output_folder": str(output_folder.resolve()),
-            "target_format": target_format,
-            "entries": [],
-        }
-        self._flush()
-
-    def add(self, entry: ArchiveEntry) -> None:
-        with self._lock:
-            self._payload["entries"].append(asdict(entry))
-            self._flush()
-
-    def _flush(self) -> None:
-        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-        tmp.parent.mkdir(parents=True, exist_ok=True)
-        with tmp.open("w", encoding="utf-8") as fh:
-            json.dump(self._payload, fh, indent=2, sort_keys=False)
-            fh.write("\n")
-            fh.flush()
-        tmp.replace(self.path)
+def _make_archive_manifest_writer(
+    path: Path,
+    *,
+    source_folder: Path,
+    archive_folder: Path,
+    output_folder: Path,
+    target_format: str,
+) -> AtomicManifestWriter[ArchiveEntry]:
+    """Build an atomic writer for the archive manifest."""
+    header = {
+        "version": ARCHIVE_MANIFEST_VERSION,
+        "created_at": datetime.now(UTC).isoformat(),
+        "source_folder": str(source_folder.resolve()),
+        "archive_folder": str(archive_folder.resolve()),
+        "output_folder": str(output_folder.resolve()),
+        "target_format": target_format,
+    }
+    return AtomicManifestWriter(path, header=header)
 
 
 def _eligible(path: Path, source_exts: frozenset[str]) -> bool:
@@ -153,21 +133,14 @@ def _scan_options_for(opts: ConvertOptions) -> ScanOptions:
 
 def _mirror_destination(original: Path, source: Path, output_folder: Path, target_ext: str) -> Path:
     """source/foo/x.heic -> output_folder/foo/x.jpg (extension swap)."""
-    rel = original.resolve().relative_to(source.resolve())
-    return (output_folder / rel).with_suffix(target_ext)
+    rel_path = original.resolve().relative_to(source.resolve())
+    return (output_folder / rel_path).with_suffix(target_ext)
 
 
 def _archive_destination(original: Path, source: Path, archive_folder: Path) -> Path:
     """source/foo/x.heic -> archive_folder/foo/x.heic (extension preserved)."""
-    rel = original.resolve().relative_to(source.resolve())
-    return archive_folder / rel
-
-
-def _rel(path: Path, base: Path) -> str:
-    try:
-        return str(path.resolve().relative_to(base.resolve()))
-    except ValueError:
-        return str(path)
+    rel_path = original.resolve().relative_to(source.resolve())
+    return archive_folder / rel_path
 
 
 def _convert_one(
@@ -281,8 +254,8 @@ def run_convert(opts: ConvertOptions, ui: UI) -> ConvertResult:
             verb = "would convert" if opts.dry_run else "converted"
             ui.info(
                 f"  [dim]→[/dim] {verb} "
-                f"[yellow]{_rel(src, opts.source)}[/yellow] → "
-                f"[green]{_rel(dest, opts.output_folder)}[/green]"
+                f"[yellow]{rel(src, opts.source)}[/yellow] → "
+                f"[green]{rel(dest, opts.output_folder)}[/green]"
             )
             progress.advance(current=src.name)
 
@@ -315,13 +288,13 @@ def _archive_originals_pass(opts: ConvertOptions, result: ConvertResult, ui: UI)
             archive_dest = _archive_destination(src, opts.source, archive_folder)
             ui.info(
                 f"  [dim]→[/dim] would move "
-                f"[yellow]{_rel(src, opts.source)}[/yellow] → "
-                f"[green]{_rel(archive_dest, archive_folder)}[/green] (in archive)"
+                f"[yellow]{rel(src, opts.source)}[/yellow] → "
+                f"[green]{rel(archive_dest, archive_folder)}[/green] (in archive)"
             )
         return
 
     archive_folder.mkdir(parents=True, exist_ok=True)
-    manifest = _ArchiveManifestWriter(
+    manifest = _make_archive_manifest_writer(
         path=archive_folder / ARCHIVE_MANIFEST_NAME,
         source_folder=opts.source,
         archive_folder=archive_folder,
@@ -365,6 +338,4 @@ def _archive_originals_pass(opts: ConvertOptions, result: ConvertResult, ui: UI)
         manifest.add(entry)
         result.archive_entries.append(entry)
         result.files_archived += 1
-        ui.detail(
-            f"    archived {_rel(src, opts.source)} → " f"{_rel(archive_dest, archive_folder)}"
-        )
+        ui.detail(f"    archived {rel(src, opts.source)} → " f"{rel(archive_dest, archive_folder)}")
