@@ -8,6 +8,58 @@ Version bumps follow the conventional-commits convention described in `CLAUDE.md
 
 ## [Unreleased]
 
+## [0.12.0](https://github.com/mickmill54/image-deduper/releases/tag/v0.12.0) — 2026-05-08
+
+`dedupe scan` now caches SHA-256 digests so an interrupted run
+doesn't re-hash everything on restart. Closes #6 (the resume
+feature was previously partial — it skipped already-moved files but
+re-hashed every byte on every run).
+
+### Added
+
+- **Persistent SHA-256 hash cache.** A new `.hash-cache.jsonl` file
+  in the dups folder records `(path, mtime_ns, size, sha256)` for
+  every file scanned. On a re-run, files whose `(mtime_ns, size)`
+  haven't changed reuse the cached digest and skip the hash entirely.
+  For Mick's typical 100GB+ iPhone library, that's the difference
+  between "minutes" and "seconds" on a Ctrl-C-and-resume.
+- New module `src/dedupe/hash_cache.py` with the `HashCache` class.
+  Append-only JSONL format (per-file flush is O(1) — important when
+  caching tens of thousands of entries). Thread-safe.
+- `_hash_all` returns a `cache_hits` counter; `run_scan` logs
+  `"hash cache: N hit(s), M fresh hash(es)"` so users can see why
+  their re-run was fast.
+- 21 new tests in `tests/test_hash_cache.py` covering: lazy file
+  creation, header validation, version mismatch, source-folder
+  mismatch, corrupt single lines, mtime/size invalidation, read-only
+  load, thread-safe concurrent writes, and an end-to-end re-run
+  speedup test that asserts the cache file doesn't grow on a fully
+  cached re-run.
+
+### Changed
+
+- A scan that finds **no duplicates** now creates the dups folder
+  (with just the `.hash-cache.jsonl` inside) so the cache persists
+  for the next run. Previously the folder was never created in the
+  no-dups case. Manifests are still only written when there's
+  something to record.
+- Cache is opt-in by absence: dry-run scans don't create the cache
+  (no side effects), and a corrupt or version-mismatched cache file
+  is silently discarded and rebuilt rather than raising.
+
+### Notes
+
+- The cache key includes both `mtime_ns` and `size` for invalidation.
+  A file modified-in-place (mtime stable but content changed) would
+  bypass the check — practical on macOS/Linux but defensible:
+  re-saving via "Save As" or a copy will bump mtime, and SHA-256 is
+  cheap relative to the cache lookup so a paranoid user can
+  `rm <dups>/.hash-cache.jsonl` to force a full rebuild.
+- The cache doesn't cap its size or compact stale entries. For very
+  long-running libraries (years of scans, many file renames) the
+  JSONL can grow. Compaction is a future enhancement; for now a
+  manual `rm` is the escape hatch.
+
 ## [0.11.0](https://github.com/mickmill54/image-deduper/releases/tag/v0.11.0) — 2026-05-07
 
 `dedupe restore <folder>` now handles sweep manifests too, not just

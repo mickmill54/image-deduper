@@ -89,8 +89,13 @@ folder
 iter_image_files()         walk + filter (extension, hidden, symlinks)
   │  list[Path]
   ▼
-_hash_all()                ThreadPoolExecutor → SHA-256 stream-hash each file
-  │  dict[hash, list[Path]]
+HashCache.open()           load `.hash-cache.jsonl` from dups folder
+  │                        (skipped on dry-run)
+  ▼
+_hash_all(cache=...)       ThreadPoolExecutor;
+  │                          hit:   reuse cached digest, skip SHA-256
+  │                          miss:  stream-hash, append to cache
+  │  dict[hash, list[Path]], cache_hits
   ▼
 filter groups where len > 1
   │  duplicate groups
@@ -106,7 +111,38 @@ for each group:
 ScanResult                 counts, errors, list[ManifestEntry]
 ```
 
-Failure modes and what they map to:
+### Hash cache (`.hash-cache.jsonl`)
+
+The expensive part of `scan` is SHA-256 over the image bytes — for a
+100GB+ library, multiple minutes. Without a cache, an interrupted
+scan threw away every byte of hash work on restart. The persistent
+cache fixes that:
+
+- **Where:** `<dups-folder>/.hash-cache.jsonl`, alongside the
+  manifest. Survives across runs; deleted only by the user.
+- **Format:** newline-delimited JSON. First line is a `_header`
+  (version, source_folder, created_at). Each subsequent line is one
+  entry: `{"path", "mtime_ns", "size", "sha256"}`. Append-only —
+  later lines override earlier lines for the same path.
+- **Invalidation:** `(mtime_ns, size)` must match exactly. Any drift
+  → cache miss → fresh hash → cache update. The cache never returns
+  a digest for a file that has changed on disk.
+- **Lazy creation:** `HashCache.open()` does not touch the disk. The
+  file (and parent folder) are created on the very first `set()`,
+  so a no-op scan never side-effects the filesystem.
+- **Concurrency:** `set()` is thread-safe. The internal lock
+  serializes writes; the dominant cost is still SHA-256.
+- **Failure modes:** missing file → empty cache (no-op). Corrupt
+  header → discard and rebuild (logged). Source-folder mismatch →
+  discard (the cache was for a different scan). Single corrupt entry
+  line → skip that line, keep the rest.
+
+Side-effect: a no-duplicates scan now creates the dups folder
+(holding only the cache file). This is intentional — the next run
+benefits from the seeded cache. No `manifest.json` is written when
+no duplicates were found.
+
+### Failure modes and what they map to:
 
 | What goes wrong | Reported as |
 |---|---|
