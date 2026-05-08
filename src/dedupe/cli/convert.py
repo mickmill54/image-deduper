@@ -177,7 +177,10 @@ def _cmd_convert(args: argparse.Namespace, ui: UI) -> int:
     # Lazy import: keeps Pillow out of the import path of the other commands.
     from dedupe.convert import ConvertOptions, run_convert  # noqa: PLC0415
 
-    folder: Path = args.folder
+    # Resolve to absolute so `dedupe convert .` lands the output folder
+    # and archive folder as siblings of the source rather than inside it
+    # (see #43).
+    folder: Path = args.folder.resolve()
 
     # --in-place is a one-flag shortcut that writes converted files into
     # the source folder and archives originals. It conflicts with an

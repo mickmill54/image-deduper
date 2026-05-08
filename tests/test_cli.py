@@ -364,6 +364,72 @@ def test_cli_sweep_combined_modes(tmp_path: Path):
     assert (src / "photo.jpg").exists()
 
 
+# --- regression: dot-source path resolution (#43) --------------------------
+#
+# When the user runs `dedupe <cmd> .` from inside a folder, the source must
+# resolve to absolute before the subcommand computes its sibling destinations.
+# Otherwise `Path(".").parent == Path(".")` and `Path(".").name == ""` collapse
+# `src.parent / f"{src.name}-suffix"` into a relative path that lands the
+# destination INSIDE the source folder. These tests pin that down for every
+# subcommand that derives a sibling-of-source destination.
+
+
+def test_cli_scan_dot_source_lands_dups_as_sibling(tmp_path: Path, monkeypatch):
+    src = tmp_path / "Photos"
+    src.mkdir()
+    (src / "a.jpg").write_bytes(b"\xff\xd8aaa")
+    (src / "a_copy.jpg").write_bytes(b"\xff\xd8aaa")  # dup of a.jpg
+    monkeypatch.chdir(src)
+
+    rc = main(["scan", ".", "--quiet"])
+    assert rc == 0
+
+    # Sibling, not inside
+    assert (tmp_path / "Photos-dups").is_dir()
+    assert not (src / "Photos-dups").exists()
+    assert not (src / "-dups").exists()
+
+
+def test_cli_sweep_dot_source_lands_destinations_as_siblings(tmp_path: Path, monkeypatch):
+    src = tmp_path / "Photos"
+    src.mkdir()
+    (src / "trip.mov").write_bytes(b"v")
+    (src / "notes.txt").write_text("notes")
+    (src / "Thumbs.db").write_text("cache")
+    monkeypatch.chdir(src)
+
+    rc = main(["sweep", ".", "--junk", "--non-images", "--videos", "--quiet"])
+    assert rc == 0
+
+    # All three destinations are siblings of the source
+    assert (tmp_path / "Photos - videos" / "trip.mov").is_file()
+    assert (tmp_path / "Photos-non-images" / "notes.txt").is_file()
+    assert (tmp_path / "Photos-sweep-log" / "sweep-manifest.json").is_file()
+
+    # And NOT inside the source (the bug from #43)
+    assert not (src / " - videos").exists()
+    assert not (src / "-non-images").exists()
+    assert not (src / "-sweep-log").exists()
+
+
+def test_cli_convert_dot_source_lands_output_as_sibling(tmp_path: Path, monkeypatch):
+    src = tmp_path / "Photos"
+    src.mkdir()
+    # Use a tiny real JPG so the convert pipeline has something to chew.
+    from PIL import Image  # noqa: PLC0415
+
+    Image.new("RGB", (4, 4), (200, 30, 30)).save(src / "a.jpg", "JPEG")
+    monkeypatch.chdir(src)
+
+    rc = main(["convert", ".", "--source-ext", "jpg", "--to", "png", "--quiet"])
+    assert rc == 0
+
+    # Default output is `<folder>-converted` as a sibling
+    assert (tmp_path / "Photos-converted" / "a.png").is_file()
+    assert not (src / "Photos-converted").exists()
+    assert not (src / "-converted").exists()
+
+
 def test_cli_find_similar_report_only(similar_tree: Path, tmp_path: Path):
     report = tmp_path / "r.html"
     rc = main(
