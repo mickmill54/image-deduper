@@ -11,8 +11,11 @@ from dedupe.sweep import (
     ACTION_DELETED,
     ACTION_MOVED,
     JUNK_FILES,
+    VIDEO_EXTENSIONS,
     SweepOptions,
+    is_image_file,
     is_junk_file,
+    is_video_file,
     run_sweep,
 )
 from dedupe.ui import UI, UIConfig
@@ -308,3 +311,321 @@ def test_clean_folder_returns_zero(tmp_path: Path):
     # (We only `mkdir` the log folder right before opening the manifest writer,
     # which we don't do if junk_files is empty.)
     assert not (src.parent / f"{src.name}-sweep-log").exists()
+
+
+# --- classification helpers -------------------------------------------------
+
+
+def test_video_extensions_constant_contents():
+    # Spot-check the documented video allowlist.
+    assert ".mov" in VIDEO_EXTENSIONS
+    assert ".mp4" in VIDEO_EXTENSIONS
+    assert ".m4v" in VIDEO_EXTENSIONS
+    assert ".mkv" in VIDEO_EXTENSIONS
+    # Lowercase by design — classifier normalizes via path.suffix.lower().
+    assert ".MP4" not in VIDEO_EXTENSIONS
+
+
+def test_is_video_file(tmp_path: Path):
+    assert is_video_file(tmp_path / "movie.mov")
+    assert is_video_file(tmp_path / "movie.MP4")  # case-insensitive
+    assert not is_video_file(tmp_path / "photo.jpg")
+
+
+def test_is_image_file(tmp_path: Path):
+    assert is_image_file(tmp_path / "photo.jpg")
+    assert is_image_file(tmp_path / "photo.HEIC")
+    assert not is_image_file(tmp_path / "movie.mov")
+    assert not is_image_file(tmp_path / "notes.txt")
+
+
+# --- non-images mode --------------------------------------------------------
+
+
+@pytest.fixture
+def mixed_tree(tmp_path: Path) -> Path:
+    """Folder with images + non-images + videos + junk + a hidden image.
+
+    Used for the combined-mode and per-mode tests below.
+
+    Layout:
+        root/
+          photo.jpg            (preserved by sweep — image)
+          notes.txt            (non-image; user content)
+          manual.pdf           (non-image)
+          archive.zip          (non-image)
+          birthday.mov         (video)
+          ski.mp4              (video)
+          Thumbs.db            (junk)
+          .DS_Store            (junk)
+          sub/
+            other_photo.jpg    (preserved)
+            song.mp3           (non-image)
+            trip.MOV           (video; case-insensitive ext check)
+            Thumbs.db          (junk; same name as top — mirror disambiguates)
+    """
+    root = tmp_path / "mixed"
+    root.mkdir()
+    (root / "photo.jpg").write_bytes(b"\xff\xd8")
+    (root / "notes.txt").write_text("notes")
+    (root / "manual.pdf").write_bytes(b"%PDF-")
+    (root / "archive.zip").write_bytes(b"PK")
+    (root / "birthday.mov").write_bytes(b"video1")
+    (root / "ski.mp4").write_bytes(b"video2")
+    (root / "Thumbs.db").write_text("cache")
+    (root / ".DS_Store").write_text("meta")
+    (root / "sub").mkdir()
+    (root / "sub" / "other_photo.jpg").write_bytes(b"\xff\xd8\x02")
+    (root / "sub" / "song.mp3").write_bytes(b"ID3")
+    (root / "sub" / "trip.MOV").write_bytes(b"video3")
+    (root / "sub" / "Thumbs.db").write_text("more cache")
+    return root
+
+
+def test_non_images_moves_to_quarantine_mirrors_layout(mixed_tree: Path, tmp_path: Path):
+    dest = tmp_path / "out-non-images"
+    result = run_sweep(
+        SweepOptions(
+            source=mixed_tree,
+            sweep_non_images=True,
+            non_images_folder=dest,
+        ),
+        QUIET,
+    )
+    # 4 non-image files: notes.txt, manual.pdf, archive.zip, sub/song.mp3
+    # (videos and junk are NOT non-images — they have their own categories
+    # and are skipped when only --non-images is set).
+    assert result.non_images_swept == 4
+    assert result.files_swept == 4
+    assert result.junk_swept == 0
+    assert result.videos_swept == 0
+
+    # Source: images preserved, junk preserved, videos preserved
+    assert (mixed_tree / "photo.jpg").exists()
+    assert (mixed_tree / "sub" / "other_photo.jpg").exists()
+    assert (mixed_tree / "Thumbs.db").exists()
+    assert (mixed_tree / "birthday.mov").exists()
+
+    # Destination: non-images moved with mirrored layout
+    assert (dest / "notes.txt").is_file()
+    assert (dest / "manual.pdf").is_file()
+    assert (dest / "archive.zip").is_file()
+    assert (dest / "sub" / "song.mp3").is_file()
+    assert (dest / "sweep-manifest.json").is_file()
+
+    # Manifest entries all action=moved
+    data = json.loads((dest / "sweep-manifest.json").read_text())
+    assert data["category"] == "non-images"
+    assert data["mode"] == "quarantine"
+    assert all(e["action"] == ACTION_MOVED for e in data["entries"])
+
+
+def test_non_images_default_destination(mixed_tree: Path):
+    result = run_sweep(SweepOptions(source=mixed_tree, sweep_non_images=True), QUIET)
+    assert result.non_images_swept == 4
+    expected = mixed_tree.parent / f"{mixed_tree.name}-non-images"
+    assert expected.is_dir()
+    assert (expected / "sweep-manifest.json").is_file()
+
+
+def test_non_images_dry_run_makes_no_changes(mixed_tree: Path, tmp_path: Path):
+    dest = tmp_path / "out-non-images"
+    result = run_sweep(
+        SweepOptions(
+            source=mixed_tree,
+            sweep_non_images=True,
+            non_images_folder=dest,
+            dry_run=True,
+        ),
+        QUIET,
+    )
+    assert result.non_images_swept == 4
+    # Source untouched
+    assert (mixed_tree / "notes.txt").exists()
+    assert (mixed_tree / "sub" / "song.mp3").exists()
+    # No destination created
+    assert not dest.exists()
+
+
+# --- videos mode ------------------------------------------------------------
+
+
+def test_videos_moves_to_default_dash_MOV_folder(mixed_tree: Path):
+    """Default destination is `<source> - MOV` (space-dash-space, all caps)
+    matching the existing manual convention."""
+    result = run_sweep(SweepOptions(source=mixed_tree, sweep_videos=True), QUIET)
+    # 3 videos: birthday.mov, ski.mp4, sub/trip.MOV (case-insensitive ext)
+    assert result.videos_swept == 3
+    assert result.files_swept == 3
+
+    expected_destination = mixed_tree.parent / f"{mixed_tree.name} - MOV"
+    assert expected_destination.is_dir()
+    assert (expected_destination / "birthday.mov").is_file()
+    assert (expected_destination / "ski.mp4").is_file()
+    assert (expected_destination / "sub" / "trip.MOV").is_file()
+    assert (expected_destination / "sweep-manifest.json").is_file()
+
+    # Source: videos gone, images preserved
+    assert not (mixed_tree / "birthday.mov").exists()
+    assert (mixed_tree / "photo.jpg").exists()
+    assert (mixed_tree / "sub" / "other_photo.jpg").exists()
+
+
+def test_videos_custom_destination(mixed_tree: Path, tmp_path: Path):
+    dest = tmp_path / "video-archive"
+    result = run_sweep(
+        SweepOptions(source=mixed_tree, sweep_videos=True, videos_folder=dest),
+        QUIET,
+    )
+    assert result.videos_swept == 3
+    assert (dest / "birthday.mov").is_file()
+
+
+def test_videos_does_not_touch_non_videos(mixed_tree: Path):
+    run_sweep(SweepOptions(source=mixed_tree, sweep_videos=True), QUIET)
+    # Non-image, non-video files preserved
+    assert (mixed_tree / "notes.txt").exists()
+    assert (mixed_tree / "manual.pdf").exists()
+    assert (mixed_tree / "Thumbs.db").exists()
+
+
+# --- combined modes ---------------------------------------------------------
+
+
+def test_all_three_modes_combined(mixed_tree: Path, tmp_path: Path):
+    """Single invocation handles junk + non-images + videos. Each
+    category writes to its own destination + manifest."""
+    junk_log = tmp_path / "junk-log"
+    non_images = tmp_path / "non-images"
+    videos = tmp_path / "videos"
+
+    result = run_sweep(
+        SweepOptions(
+            source=mixed_tree,
+            sweep_junk=True,
+            log_folder=junk_log,
+            sweep_non_images=True,
+            non_images_folder=non_images,
+            sweep_videos=True,
+            videos_folder=videos,
+        ),
+        QUIET,
+    )
+
+    # 3 junk + 4 non-images + 3 videos = 10 total
+    assert result.junk_swept == 3  # Thumbs.db (×2), .DS_Store
+    assert result.non_images_swept == 4
+    assert result.videos_swept == 3
+    assert result.files_swept == 10
+
+    # Junk: deleted (default mode) — not present anywhere on disk
+    assert not (mixed_tree / "Thumbs.db").exists()
+    assert not (mixed_tree / "sub" / "Thumbs.db").exists()
+    assert not (mixed_tree / ".DS_Store").exists()
+    # Junk audit log present
+    assert (junk_log / "sweep-manifest.json").is_file()
+    junk_data = json.loads((junk_log / "sweep-manifest.json").read_text())
+    assert junk_data["category"] == "junk"
+    assert junk_data["mode"] == "delete"
+    assert all(e["action"] == ACTION_DELETED for e in junk_data["entries"])
+
+    # Non-images: moved to their folder
+    assert (non_images / "notes.txt").is_file()
+    assert (non_images / "sub" / "song.mp3").is_file()
+
+    # Videos: moved to their folder
+    assert (videos / "birthday.mov").is_file()
+    assert (videos / "sub" / "trip.MOV").is_file()
+
+    # Images: preserved
+    assert (mixed_tree / "photo.jpg").exists()
+    assert (mixed_tree / "sub" / "other_photo.jpg").exists()
+
+
+def test_combined_dry_run_makes_no_changes(mixed_tree: Path, tmp_path: Path):
+    junk_log = tmp_path / "junk-log"
+    non_images = tmp_path / "non-images"
+    videos = tmp_path / "videos"
+
+    result = run_sweep(
+        SweepOptions(
+            source=mixed_tree,
+            sweep_junk=True,
+            log_folder=junk_log,
+            sweep_non_images=True,
+            non_images_folder=non_images,
+            sweep_videos=True,
+            videos_folder=videos,
+            dry_run=True,
+        ),
+        QUIET,
+    )
+    # All counted but nothing actually moved/deleted.
+    assert result.files_swept == 10
+    # All originals still in place
+    assert (mixed_tree / "Thumbs.db").exists()
+    assert (mixed_tree / "notes.txt").exists()
+    assert (mixed_tree / "birthday.mov").exists()
+    # No destinations created
+    assert not junk_log.exists()
+    assert not non_images.exists()
+    assert not videos.exists()
+
+
+def test_combined_excludes_image_files(mixed_tree: Path):
+    """Image files are NEVER touched, regardless of which modes are on."""
+    run_sweep(
+        SweepOptions(
+            source=mixed_tree,
+            sweep_junk=True,
+            sweep_non_images=True,
+            sweep_videos=True,
+        ),
+        QUIET,
+    )
+    # All JPGs survived
+    assert (mixed_tree / "photo.jpg").exists()
+    assert (mixed_tree / "sub" / "other_photo.jpg").exists()
+
+
+def test_exclude_pattern_applies_across_modes(mixed_tree: Path):
+    """`--exclude` filters before the category dispatch — a sub/* exclude
+    should preserve everything inside sub/ regardless of category."""
+    result = run_sweep(
+        SweepOptions(
+            source=mixed_tree,
+            sweep_junk=True,
+            sweep_non_images=True,
+            sweep_videos=True,
+            exclude_patterns=("sub/*",),
+        ),
+        QUIET,
+    )
+    # Without exclude: 3 junk + 4 non-images + 3 videos = 10
+    # With sub/* excluded: drop sub/Thumbs.db + sub/song.mp3 + sub/trip.MOV = 3
+    # So 10 - 3 = 7
+    assert result.files_swept == 7
+    # sub/* contents preserved entirely
+    assert (mixed_tree / "sub" / "Thumbs.db").exists()
+    assert (mixed_tree / "sub" / "song.mp3").exists()
+    assert (mixed_tree / "sub" / "trip.MOV").exists()
+    assert (mixed_tree / "sub" / "other_photo.jpg").exists()
+
+
+def test_videos_refuses_to_overwrite(mixed_tree: Path, tmp_path: Path):
+    dest = tmp_path / "videos"
+    dest.mkdir()
+    # Pre-existing file at one of the destinations.
+    (dest / "birthday.mov").write_bytes(b"existing")
+
+    result = run_sweep(
+        SweepOptions(source=mixed_tree, sweep_videos=True, videos_folder=dest),
+        QUIET,
+    )
+    # 3 videos total; 1 conflict; 2 succeed.
+    assert result.videos_swept == 2
+    assert any("refusing to overwrite" in e for e in result.errors)
+    # Pre-existing file untouched
+    assert (dest / "birthday.mov").read_bytes() == b"existing"
+    # Source file that couldn't be moved is still in place
+    assert (mixed_tree / "birthday.mov").exists()

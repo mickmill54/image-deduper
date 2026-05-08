@@ -265,9 +265,74 @@ def test_cli_sweep_json_output(tmp_path: Path, capsys):
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["command"] == "sweep"
-    assert payload["mode"] == "delete"
+    assert payload["junk_mode"] == "delete"
     assert payload["files_swept"] == 1
+    assert payload["junk_swept"] == 1
     assert payload["entries"][0]["action"] == "deleted"
+
+
+def test_cli_sweep_videos_default_dash_MOV_destination(tmp_path: Path):
+    src = tmp_path / "photos"
+    src.mkdir()
+    (src / "trip.mov").write_bytes(b"video")
+    (src / "keep.jpg").write_bytes(b"\xff\xd8")
+
+    rc = main(["sweep", str(src), "--videos", "--quiet"])
+    assert rc == 0
+
+    # Default destination: `<src> - MOV` (note the spaces)
+    expected = src.parent / f"{src.name} - MOV"
+    assert (expected / "trip.mov").is_file()
+    assert (expected / "sweep-manifest.json").is_file()
+    # Image preserved
+    assert (src / "keep.jpg").exists()
+
+
+def test_cli_sweep_non_images_moves_user_content(tmp_path: Path):
+    src = tmp_path / "photos"
+    src.mkdir()
+    (src / "notes.txt").write_text("notes")
+    (src / "manual.pdf").write_bytes(b"%PDF-")
+    (src / "keep.jpg").write_bytes(b"\xff\xd8")
+
+    rc = main(["sweep", str(src), "--non-images", "--quiet"])
+    assert rc == 0
+
+    expected = src.parent / f"{src.name}-non-images"
+    assert (expected / "notes.txt").is_file()
+    assert (expected / "manual.pdf").is_file()
+    # Image preserved
+    assert (src / "keep.jpg").exists()
+
+
+def test_cli_sweep_combined_modes(tmp_path: Path):
+    src = tmp_path / "photos"
+    src.mkdir()
+    (src / "Thumbs.db").write_text("cache")
+    (src / "notes.txt").write_text("notes")
+    (src / "trip.mov").write_bytes(b"video")
+    (src / "photo.jpg").write_bytes(b"\xff\xd8")
+
+    rc = main(
+        [
+            "sweep",
+            str(src),
+            "--junk",
+            "--non-images",
+            "--videos",
+            "--quiet",
+        ]
+    )
+    assert rc == 0
+
+    # Each category went to its own folder
+    assert (src.parent / f"{src.name}-non-images" / "notes.txt").is_file()
+    assert (src.parent / f"{src.name} - MOV" / "trip.mov").is_file()
+    # Junk deleted (default), audit log written
+    assert (src.parent / f"{src.name}-sweep-log" / "sweep-manifest.json").is_file()
+    assert not (src / "Thumbs.db").exists()
+    # Image preserved
+    assert (src / "photo.jpg").exists()
 
 
 def test_cli_find_similar_report_only(similar_tree: Path, tmp_path: Path):
