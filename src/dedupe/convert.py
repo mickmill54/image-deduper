@@ -17,17 +17,16 @@ folder, refusing to overwrite. Same family of guarantees as `scan`.
 
 from __future__ import annotations
 
-import json
 import logging
 import shutil
-import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
 from PIL import Image
 
+from dedupe.manifest import AtomicManifestWriter
 from dedupe.scan import ScanOptions, iter_image_files
 from dedupe.ui import UI
 from dedupe.walk import rel
@@ -96,44 +95,24 @@ class ConvertResult:
     archive_entries: list[ArchiveEntry] = field(default_factory=list)
 
 
-class _ArchiveManifestWriter:
-    """Incremental writer for the archive manifest. Atomic per-entry flush."""
-
-    def __init__(
-        self,
-        path: Path,
-        *,
-        source_folder: Path,
-        archive_folder: Path,
-        output_folder: Path,
-        target_format: str,
-    ) -> None:
-        self.path = path
-        self._lock = threading.Lock()
-        self._payload: dict = {
-            "version": ARCHIVE_MANIFEST_VERSION,
-            "created_at": datetime.now(UTC).isoformat(),
-            "source_folder": str(source_folder.resolve()),
-            "archive_folder": str(archive_folder.resolve()),
-            "output_folder": str(output_folder.resolve()),
-            "target_format": target_format,
-            "entries": [],
-        }
-        self._flush()
-
-    def add(self, entry: ArchiveEntry) -> None:
-        with self._lock:
-            self._payload["entries"].append(asdict(entry))
-            self._flush()
-
-    def _flush(self) -> None:
-        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-        tmp.parent.mkdir(parents=True, exist_ok=True)
-        with tmp.open("w", encoding="utf-8") as fh:
-            json.dump(self._payload, fh, indent=2, sort_keys=False)
-            fh.write("\n")
-            fh.flush()
-        tmp.replace(self.path)
+def _make_archive_manifest_writer(
+    path: Path,
+    *,
+    source_folder: Path,
+    archive_folder: Path,
+    output_folder: Path,
+    target_format: str,
+) -> AtomicManifestWriter[ArchiveEntry]:
+    """Build an atomic writer for the archive manifest."""
+    header = {
+        "version": ARCHIVE_MANIFEST_VERSION,
+        "created_at": datetime.now(UTC).isoformat(),
+        "source_folder": str(source_folder.resolve()),
+        "archive_folder": str(archive_folder.resolve()),
+        "output_folder": str(output_folder.resolve()),
+        "target_format": target_format,
+    }
+    return AtomicManifestWriter(path, header=header)
 
 
 def _eligible(path: Path, source_exts: frozenset[str]) -> bool:
@@ -315,7 +294,7 @@ def _archive_originals_pass(opts: ConvertOptions, result: ConvertResult, ui: UI)
         return
 
     archive_folder.mkdir(parents=True, exist_ok=True)
-    manifest = _ArchiveManifestWriter(
+    manifest = _make_archive_manifest_writer(
         path=archive_folder / ARCHIVE_MANIFEST_NAME,
         source_folder=opts.source,
         archive_folder=archive_folder,

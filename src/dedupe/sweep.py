@@ -18,15 +18,14 @@ hardcoded `JUNK_FILES` allowlist gets the delete-by-default treatment.
 
 from __future__ import annotations
 
-import json
 import logging
 import shutil
-import threading
 from collections.abc import Iterator
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from dedupe.manifest import AtomicManifestWriter
 from dedupe.ui import UI
 from dedupe.walk import WalkOptions, rel, walk_files
 
@@ -87,42 +86,22 @@ class SweepResult:
     entries: list[SweepEntry] = field(default_factory=list)
 
 
-class _SweepManifestWriter:
-    """Atomic-flushed sweep manifest. Same write semantics as scan's manifest."""
-
-    def __init__(
-        self,
-        path: Path,
-        *,
-        source_folder: Path,
-        quarantine_folder: Path | None,
-        mode: str,  # "delete" or "quarantine"
-    ) -> None:
-        self.path = path
-        self._lock = threading.Lock()
-        self._payload: dict = {
-            "version": SWEEP_MANIFEST_VERSION,
-            "created_at": datetime.now(UTC).isoformat(),
-            "source_folder": str(source_folder.resolve()),
-            "quarantine_folder": (str(quarantine_folder.resolve()) if quarantine_folder else None),
-            "mode": mode,
-            "entries": [],
-        }
-        self._flush()
-
-    def add(self, entry: SweepEntry) -> None:
-        with self._lock:
-            self._payload["entries"].append(asdict(entry))
-            self._flush()
-
-    def _flush(self) -> None:
-        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-        tmp.parent.mkdir(parents=True, exist_ok=True)
-        with tmp.open("w", encoding="utf-8") as fh:
-            json.dump(self._payload, fh, indent=2, sort_keys=False)
-            fh.write("\n")
-            fh.flush()
-        tmp.replace(self.path)
+def _make_sweep_manifest_writer(
+    path: Path,
+    *,
+    source_folder: Path,
+    quarantine_folder: Path | None,
+    mode: str,  # "delete" or "quarantine"
+) -> AtomicManifestWriter[SweepEntry]:
+    """Build an atomic writer for the sweep manifest."""
+    header = {
+        "version": SWEEP_MANIFEST_VERSION,
+        "created_at": datetime.now(UTC).isoformat(),
+        "source_folder": str(source_folder.resolve()),
+        "quarantine_folder": (str(quarantine_folder.resolve()) if quarantine_folder else None),
+        "mode": mode,
+    }
+    return AtomicManifestWriter(path, header=header)
 
 
 def is_junk_file(path: Path) -> bool:
@@ -212,10 +191,10 @@ def run_sweep(opts: SweepOptions, ui: UI) -> SweepResult:  # noqa: PLR0912, PLR0
         )
 
     # Set up manifest writer (skip in dry-run; just collect entries).
-    manifest_writer: _SweepManifestWriter | None = None
+    manifest_writer: AtomicManifestWriter[SweepEntry] | None = None
     if not opts.dry_run:
         log_folder.mkdir(parents=True, exist_ok=True)
-        manifest_writer = _SweepManifestWriter(
+        manifest_writer = _make_sweep_manifest_writer(
             path=log_folder / SWEEP_MANIFEST_NAME,
             source_folder=opts.source,
             quarantine_folder=quarantine_folder,
