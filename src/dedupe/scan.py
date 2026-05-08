@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from dedupe.hash_cache import HashCache
 from dedupe.manifest import MANIFEST_NAME, ManifestEntry, ManifestWriter
 from dedupe.ui import UI
 from dedupe.walk import (
@@ -109,28 +110,60 @@ def _mirror_destination(original: Path, source: Path, dups_folder: Path) -> Path
     return dups_folder / rel_path
 
 
-def _hash_all(files: list[Path], threads: int, ui: UI) -> tuple[dict[str, list[Path]], list[str]]:
-    """Hash every file. Returns (hash -> [paths], errors)."""
+def _hash_one_with_cache(path: Path, cache: HashCache | None) -> tuple[str, bool]:
+    """Wrap :func:`hash_file` with a cache lookup-and-store cycle.
+
+    Returns ``(digest, was_cache_hit)``. On a hit, the digest comes
+    from the cache and no fresh SHA-256 runs. On a miss, the file is
+    hashed and the result is written back to the cache so subsequent
+    runs skip it.
+    """
+    if cache is not None:
+        cached = cache.get(path)
+        if cached is not None:
+            return cached, True
+    digest = hash_file(path)
+    if cache is not None:
+        cache.set(path, digest)
+    return digest, False
+
+
+def _hash_all(
+    files: list[Path],
+    threads: int,
+    ui: UI,
+    cache: HashCache | None = None,
+) -> tuple[dict[str, list[Path]], list[str], int]:
+    """Hash every file, optionally consulting/updating ``cache``.
+
+    Returns ``(hash -> [paths], errors, cache_hits)``. ``cache_hits``
+    counts the files whose digest came from the cache (no fresh
+    SHA-256). Useful for the summary line so users see why their
+    re-run was fast.
+    """
     groups: dict[str, list[Path]] = {}
     errors: list[str] = []
+    cache_hits = 0
     with (
         ui.progress("Hashing", total=len(files)) as progress,
         ThreadPoolExecutor(max_workers=threads or None) as pool,
     ):
-        future_to_path = {pool.submit(hash_file, p): p for p in files}
+        future_to_path = {pool.submit(_hash_one_with_cache, p, cache): p for p in files}
         for fut in as_completed(future_to_path):
             path = future_to_path[fut]
             try:
-                digest = fut.result()
+                digest, was_hit = fut.result()
             except OSError as exc:
                 msg = f"hash failed for {path}: {exc}"
                 errors.append(msg)
                 ui.warn(msg)
                 progress.advance(current=path.name)
                 continue
+            if was_hit:
+                cache_hits += 1
             groups.setdefault(digest, []).append(path)
             progress.advance(current=path.name)
-    return groups, errors
+    return groups, errors, cache_hits
 
 
 def _move_one(
@@ -148,7 +181,7 @@ def _move_one(
     shutil.move(str(src), str(dest))
 
 
-def run_scan(opts: ScanOptions, ui: UI) -> ScanResult:  # noqa: PLR0912 — orchestrator with linear failure-mode branches
+def run_scan(opts: ScanOptions, ui: UI) -> ScanResult:  # noqa: PLR0912, PLR0915 — orchestrator with linear failure-mode branches
     """Execute a scan. Pure orchestration; per-step work lives in helpers."""
     if not opts.source.exists():
         raise FileNotFoundError(f"source folder does not exist: {opts.source}")
@@ -171,8 +204,27 @@ def run_scan(opts: ScanOptions, ui: UI) -> ScanResult:  # noqa: PLR0912 — orch
             moves=[],
         )
 
+    # Open the persistent hash cache so an interrupted run doesn't
+    # re-hash everything on restart. Skipped on dry-run (no side
+    # effects) and silently degraded to None if cache initialization
+    # fails (the scan is still correct, just no faster than v0.11.0).
+    hash_cache: HashCache | None = None
+    if not opts.dry_run:
+        try:
+            hash_cache = HashCache.open(
+                dups_folder=opts.dups_folder,
+                source_folder=opts.source,
+            )
+            if len(hash_cache) > 0:
+                ui.detail(f"hash cache: {len(hash_cache)} entry(ies) loaded")
+        except OSError as exc:
+            ui.warn(f"hash cache could not be opened ({exc}); proceeding without cache")
+            hash_cache = None
+
     # Hash in parallel.
-    hash_groups, errors = _hash_all(files, opts.threads, ui)
+    hash_groups, errors, cache_hits = _hash_all(files, opts.threads, ui, cache=hash_cache)
+    if hash_cache is not None and cache_hits > 0:
+        ui.detail(f"hash cache: {cache_hits} hit(s), {len(files) - cache_hits} fresh hash(es)")
 
     # Find duplicate groups.
     dup_groups = {h: paths for h, paths in hash_groups.items() if len(paths) > 1}

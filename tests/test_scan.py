@@ -141,7 +141,14 @@ def test_run_scan_no_duplicates_returns_clean_result(tmp_path: Path, make_image)
     result = run_scan(ScanOptions(source=src, dups_folder=dups), QUIET)
     assert result.duplicate_groups == 0
     assert result.files_moved == 0
-    assert not dups.exists()
+    # Dups folder is created so the hash cache (.hash-cache.jsonl)
+    # persists for the next run — even when no duplicates were found,
+    # the hashes are valuable on a future scan. No manifest.json is
+    # written (no moves to record).
+    assert dups.is_dir()
+    assert not (dups / "manifest.json").exists()
+    # Cache file exists with all three hashes seeded.
+    assert (dups / ".hash-cache.jsonl").is_file()
 
 
 def test_run_scan_recursive_off(fixture_tree: Path):
