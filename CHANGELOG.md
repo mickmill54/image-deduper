@@ -8,6 +8,23 @@ Version bumps follow the conventional-commits convention described in `CLAUDE.md
 
 ## [Unreleased]
 
+## [0.13.1](https://github.com/mickmill54/image-deduper/releases/tag/v0.13.1) — 2026-05-12
+
+Maintenance-only release. No runtime behavior change; the published
+wheel, sdist, and macOS binary are functionally identical to v0.13.0.
+
+### Fixed
+
+- **#49** — Nightly `Audit` workflow was failing every night on the
+  destructive-call safety check: `hash_cache.py` calls `Path.unlink()`
+  to remove a stale on-disk hash cache (invalid header or
+  source-folder mismatch), which the gate flagged because only
+  `sweep.py` is whitelisted for `Path.unlink()`. The unlink target is
+  the tool's own metadata file, not user data, so the case sits
+  outside the CLAUDE.md "Never delete files" invariant. Silenced with
+  the `# noqa: destructive-ok=…` escape that
+  `scripts/check_no_destructive_calls.sh` already supports.
+
 ## [0.13.0](https://github.com/mickmill54/image-deduper/releases/tag/v0.13.0) — 2026-05-08
 
 `dedupe convert --in-place` learns four conflict-resolution modes,
