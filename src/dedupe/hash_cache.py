@@ -174,7 +174,7 @@ class HashCache:
                 )
             # Header invalid or source mismatch → start fresh.
             try:
-                path.unlink()
+                path.unlink()  # noqa: destructive-ok=stale tool cache, not user data
             except OSError as exc:
                 logger.warning("hash_cache: could not remove stale cache %s: %s", path, exc)
 
